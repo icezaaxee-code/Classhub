@@ -12,12 +12,17 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
-let execCache = null;
-let execCacheTime = 0;
-let visitCache = null;
-let visitCacheTime = 0;
-let caseCache = null;
-let caseCacheTime = 0;
+let execCache = null, execCacheTime = 0;
+let visitCache = null, visitCacheTime = 0;
+let caseCache = null, caseCacheTime = 0;
+let studentCache = null, studentCacheTime = 0;
+let behaviorCache = null, behaviorCacheTime = 0;
+let assignCache = null, assignCacheTime = 0;
+let docCache = null, docCacheTime = 0;
+let infirmaryCache = null, infirmaryCacheTime = 0;
+let dailyCache = null, dailyCacheTime = 0;
+let contactCache = null, contactCacheTime = 0;
+let activityCache = null, activityCacheTime = 0;
 
 // ฟังก์ชันตรวจสอบ Token แบบยืดหยุ่น ป้องกันการหลุดหน้าจอ
 async function verifyToken(token) {
@@ -527,6 +532,12 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
       
      /* ── STUDENT & PARENT ── */
       case 'student.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (studentCache && (nowTime - studentCacheTime < 120000)) {
+          return res.json(studentCache);
+        }
+
         const keyword = String(payload?.q || '').trim();
         const classId = String(payload?.class_id || '').trim();
         
@@ -589,7 +600,7 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
           };
         });
 
-        return res.json({ 
+        const resultPayload = { 
           ok: true, 
           items, 
           total: count || items.length, 
@@ -603,8 +614,15 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
             watch: items.filter(s => s.watch_level && s.watch_level !== 'ทั่วไป').length, 
             disadvantage: items.filter(s => s.disadvantage).length 
           } 
-        });
+        };
+
+        // 📌 บันทึกลงแคชเพื่อเรียกใช้ในรอบถัดไป
+        studentCache = resultPayload;
+        studentCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
+
       case 'student.options': {
         const { data: students } = await supabase.from('Students').select('id, student_code, prefix, first_name, last_name, nickname, class_id, number, level');
         const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
@@ -821,12 +839,14 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
           }
         }
 await writeAudit(currentUser, dataIn.id ? 'student.update' : 'student.create', 'Students', result.id, { name: `${result.first_name || ''} ${result.last_name || ''}`.trim() });
-	execCache = null;
+	      execCache = null;
+        studentCache = null;
         return res.json({ ok: true, item: result });
       }
 
       case 'student.delete': {
         await supabase.from('Students').delete().eq('id', payload?.id);
+        studentCache = null;
         return res.json({ ok: true });
       }
 
@@ -1284,13 +1304,15 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
-await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create', 'Behaviors', result.id, { point: result.point });
-	execCache = null;
+        await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create', 'Behaviors', result.id, { point: result.point });
+	      execCache = null;
+        behaviorCache = null;
         return res.json({ ok: true, item: result });
       }
       
       case 'behavior.delete': {
         await supabase.from('Behaviors').delete().eq('id', payload?.id);
+        behaviorCache = null;
         return res.json({ ok: true });
       }
 
@@ -1483,10 +1505,12 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
+        dailyCache = null;
         return res.json({ ok: true, item: result });
       }
       case 'daily.delete': {
         await supabase.from('DailyLogs').delete().eq('id', payload?.id);
+        dailyCache = null;
         return res.json({ ok: true });
       }
 
@@ -1579,11 +1603,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
+        infirmaryCache = null;
         return res.json({ ok: true, item: result });
       }
 
       case 'infirmary.delete': {
         await supabase.from('HealthVisits').delete().eq('id', payload?.id);
+        infirmaryCache = null;
         return res.json({ ok: true });
       }
 
@@ -1624,11 +1650,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
+        contactCache = null;
         return res.json({ ok: true, item: result });
       }
 
       case 'contact.delete': {
         await supabase.from('ParentContacts').delete().eq('id', payload?.id);
+        contactCache = null;
         return res.json({ ok: true });
       }
 
@@ -1661,6 +1689,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
+        activityCache = null;
         return res.json({ ok: true, item: result });
       }
 
@@ -1687,11 +1716,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
+        assignCache = null;
         return res.json({ ok: true, item: result });
       }
 
       case 'assign.delete': {
         await supabase.from('Assignments').delete().eq('id', payload?.id);
+        assignCache = null;
         return res.json({ ok: true });
       }
 
@@ -1796,11 +1827,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
+        docCache = null;
         return res.json({ ok: true, item: result });
       }
 
       case 'doc.delete': {
         await supabase.from('Documents').delete().eq('id', payload?.id);
+        docCache = null;
         return res.json({ ok: true });
       }
 
@@ -2320,6 +2353,12 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
       case 'assign.list':
       case 'assignment.list':
       case 'assignments.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (assignCache && (nowTime - assignCacheTime < 120000)) {
+          return res.json(assignCache);
+        }
+
         const keyword = String(payload?.q || '').trim().toLowerCase();
         const filterClassId = String(payload?.class_id || '').trim();
         const filterType = String(payload?.filter || '').trim();
@@ -2378,7 +2417,6 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           if (data) classes = data;
         } catch (e) {}
 
-        // จัดเรียงลำดับห้องเรียนตามระดับชั้นอย่างเป็นระเบียบ
         const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
         classes.sort((a, b) => {
           const lA = levelOrder[String(a.level || '').trim()] || 99;
@@ -2387,12 +2425,10 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           return String(a.room || '').localeCompare(String(b.room || ''), 'th');
         });
 
-        // 📌 กรองตามห้องเรียน (class_id)
         if (filterClassId) {
           items = items.filter(x => String(x.class_id) === filterClassId);
         }
 
-        // 📌 กรองตามประเภทตัวกรอง (filterType)
         const todayStr = getTodayThai();
         if (filterType === 'today') {
           items = items.filter(x => String(x.assign_date || '').slice(0, 10) === todayStr);
@@ -2402,7 +2438,6 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           items = items.filter(x => x.state === 'overdue');
         }
 
-        // 📌 กรองตามคำค้นหา (keyword)
         if (keyword) {
           items = items.filter(x => 
             String(x.title || '').toLowerCase().includes(keyword) || 
@@ -2419,7 +2454,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           pending_students: items.reduce((acc, x) => acc + x.pending, 0)
         };
 
-        return res.json({
+        const resultPayload = {
           ok: true,
           items,
           total: items.length,
@@ -2431,7 +2466,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
             name: c.name || `${c.level || ''}/${c.room || ''}` 
           })),
           can: { manage: true }
-        });
+        };
+
+        // 📌 บันทึกลงแคช
+        assignCache = resultPayload;
+        assignCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
 
       case 'assign.get':
@@ -2585,7 +2626,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
             }
             savedCount++;
           }
-
+          assignCache = null;
           return res.json({ ok: true, saved: savedCount });
         } catch (err) {
           console.error('❌ Critical error in assign.submit:', err.message);
@@ -2602,6 +2643,12 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
       }
 
       case 'daily.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (dailyCache && (nowTime - dailyCacheTime < 120000)) {
+          return res.json(dailyCache);
+        }
+
         const keyword = String(payload?.q || '').trim();
         const classId = String(payload?.class_id || '').trim();
         const category = String(payload?.category || '').trim();
@@ -2617,12 +2664,11 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
         const { data: users } = await supabase.from('Users').select('id, full_name');
         const userMap = {}; (users || []).forEach(u => { userMap[u.id] = u.full_name; });
         
-        // ดึงรายชื่อห้องเรียนจากตาราง Classrooms มาใส่ให้สมบูรณ์
         const { data: classrooms } = await supabase.from('Classrooms').select('*');
         
         const items = (logs || []).map(l => ({ ...l, by: userMap[l.created_by] || l.created_by || 'ระบบ' }));
         
-        return res.json({ 
+        const resultPayload = { 
           ok: true, 
           items, 
           total: count || items.length, 
@@ -2632,10 +2678,22 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           categories: ['กิจกรรมหน้าเสาธง', 'ดูแลความเรียบร้อย', 'ทำความสะอาดห้องเรียน', 'เหตุการณ์ในห้องเรียน', 'ติดตามนักเรียน', 'งานที่ได้รับมอบหมาย', 'เหตุการณ์ผิดปกติ'], 
           classes: classrooms || [], 
           can: { manage: true }
-        });
+        };
+
+        // 📌 บันทึกลงแคช
+        dailyCache = resultPayload;
+        dailyCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
 
       case 'behavior.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (behaviorCache && (nowTime - behaviorCacheTime < 120000)) {
+          return res.json(behaviorCache);
+        }
+
         const { data: behaviors } = await supabase.from('Behaviors').select('*');
         const { data: students } = await supabase.from('Students').select('id, student_code, prefix, first_name, last_name, nickname, number, class_id, photo_url, watch_level');
         const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
@@ -2655,7 +2713,6 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
         const classMap = {}; (classes || []).forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
         const userMap = {}; (users || []).forEach(u => { userMap[u.id] = u.full_name; });
 
-        // 📌 คำนวณและกำหนดโทนสีแยกตามประเภทพฤติกรรม
         let typeCountMap = {};
         (behaviors || []).forEach(b => {
           let tp = b.type || 'พฤติกรรมทั่วไป';
@@ -2665,13 +2722,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
         const byTypeArray = Object.keys(typeCountMap).map(k => {
           let tone = 'info';
           if (k.includes('บวก') || k.includes('ชม')) {
-            tone = 'ok';    // สีเขียว (เชิงบวก / ได้รับคำชม)
+            tone = 'ok';
           } else if (k.includes('ติดตาม')) {
-            tone = 'warn';  // สีส้ม (พฤติกรรมที่ต้องติดตาม)
+            tone = 'warn';
           } else if (k.includes('ผิดระเบียบ')) {
-            tone = 'bad';   // สีแดง (ทำผิดระเบียบ)
+            tone = 'bad';
           } else if (k.includes('รางวัล')) {
-            tone = 'acc';   // สีม่วง (ได้รับรางวัล)
+            tone = 'acc';
           }
           return { label: k, value: typeCountMap[k], tone: tone };
         });
@@ -2695,8 +2752,12 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           };
         });
 
-        return res.json({ 
-          ok: true, items, total: items.length, pages: 1, page: 1, 
+        const resultPayload = { 
+          ok: true, 
+          items, 
+          total: items.length, 
+          pages: 1, 
+          page: 1, 
           kpi: { 
             total: items.length, 
             positive: items.filter(x => (x.point || 0) >= 0).length, 
@@ -2709,7 +2770,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           severities: ['น้อย', 'ปานกลาง', 'มาก'], 
           classes: (classes || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })), 
           can: { manage: true }
-        });
+        };
+
+        // 📌 บันทึกลงแคช
+        behaviorCache = resultPayload;
+        behaviorCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
 
       case 'visit.list': {
@@ -2952,6 +3019,12 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
       }
 
       case 'doc.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (docCache && (nowTime - docCacheTime < 120000)) {
+          return res.json(docCache);
+        }
+
         const keyword = String(payload?.q || '').trim().toLowerCase();
         const filterClassId = String(payload?.class_id || '').trim();
         const filterCategory = String(payload?.category || '').trim();
@@ -2978,17 +3051,17 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           icon: 'file-earmark'
         }));
 
-        // 📌 กรองตามห้องเรียน (class_id)
+        // กรองตามห้องเรียน
         if (filterClassId) {
           items = items.filter(x => String(x.class_id) === filterClassId);
         }
 
-        // 📌 กรองตามหมวดหมู่เอกสาร (category)
+        // กรองตามหมวดหมู่เอกสาร
         if (filterCategory) {
           items = items.filter(x => String(x.category) === filterCategory);
         }
 
-        // 📌 กรองตามคำค้นหา (ชื่อเอกสารหรือเลขที่หนังสือ)
+        // กรองตามคำค้นหา
         if (keyword) {
           items = items.filter(x => 
             String(x.title || '').toLowerCase().includes(keyword) || 
@@ -3000,7 +3073,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
         const categoriesSet = new Set();
         (docs || []).forEach(d => { if (d.category) categoriesSet.add(d.category); });
 
-        return res.json({ 
+        const resultPayload = { 
           ok: true, 
           items, 
           total: items.length, 
@@ -3015,10 +3088,22 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           categories: Array.from(categoriesSet).length > 0 ? Array.from(categoriesSet) : ['รายงาน', 'หนังสือราชการ', 'เอกสารอื่น'], 
           classes: (classes || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })), 
           can: { manage: true } 
-        });
+        };
+
+        // 📌 บันทึกลงแคช
+        docCache = resultPayload;
+        docCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
 
       case 'infirmary.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (infirmaryCache && (nowTime - infirmaryCacheTime < 120000)) {
+          return res.json(infirmaryCache);
+        }
+
         const keyword = String(payload?.q || '').trim().toLowerCase();
         const filterClassId = String(payload?.class_id || '').trim();
 
@@ -3026,7 +3111,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
         const { data: students } = await supabase.from('Students').select('id, prefix, first_name, last_name, nickname, number, class_id, photo_url');
         const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
         
-        // 📌 จัดเรียงลำดับห้องเรียนตามระดับชั้น (อ.1 -> ม.3)
+        // จัดเรียงลำดับห้องเรียนตามระดับชั้น
         const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
         if (classes) {
           classes.sort((a, b) => {
@@ -3055,11 +3140,11 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           };
         });
 
-        // 📌 กรองตามห้องเรียน
+        // กรองตามห้องเรียน
         if (filterClassId) {
           items = items.filter(x => String(x.student.class_id) === filterClassId);
         }
-        // 📌 กรองตามคำค้นหา (ชื่อนักเรียนหรืออาการ)
+        // กรองตามคำค้นหา
         if (keyword) {
           items = items.filter(x => 
             x.student.name.toLowerCase().includes(keyword) || 
@@ -3067,7 +3152,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           );
         }
 
-        return res.json({ 
+        const resultPayload = { 
           ok: true, 
           items, 
           total: items.length, 
@@ -3081,7 +3166,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           }, 
           classes: (classes || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })), 
           can: { manage: true } 
-        });
+        };
+
+        // 📌 บันทึกลงแคช
+        infirmaryCache = resultPayload;
+        infirmaryCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
 
       case 'case.list': {
@@ -3198,13 +3289,18 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
       }
 
       case 'contact.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (contactCache && (nowTime - contactCacheTime < 120000)) {
+          return res.json(contactCache);
+        }
+
         const { data: contacts } = await supabase.from('ParentContacts').select('*');
         const { data: students } = await supabase.from('Students').select('id, prefix, first_name, last_name, nickname, number, class_id, photo_url');
         const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
         const studentMap = {}; (students || []).forEach(s => { studentMap[s.id] = s; });
         const classMap = {}; (classes || []).forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
 
-        // คำนวณสรุปสถิติจำนวนตามช่องทางติดต่อ พร้อมกระจายโทนสี (tone)
         let channelCountMap = {};
         (contacts || []).forEach(ct => {
           let ch = ct.channel || 'ช่องทางอื่น';
@@ -3233,7 +3329,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           };
         });
 
-        return res.json({ 
+        const resultPayload = { 
           ok: true, 
           items, 
           total: items.length, 
@@ -3249,7 +3345,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           channels: ['โทรศัพท์', 'พบผู้ปกครอง', 'หนังสือแจ้ง', 'LINE', 'การประชุม', 'ช่องทางอื่น'], 
           classes: (classes || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })), 
           can: { manage: true } 
-        });
+        };
+
+        // 📌 บันทึกลงแคช
+        contactCache = resultPayload;
+        contactCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
 
       // 📌 เพิ่มเคส activity.get สำหรับดึงรายละเอียดกิจกรรมและรายชื่อผู้เข้าร่วม
@@ -3321,6 +3423,12 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
 
       // 📌 ปรับปรุงเคส activity.list ให้รองรับการค้นหา กรองห้องเรียน และเรียงลำดับห้อง
       case 'activity.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (activityCache && (nowTime - activityCacheTime < 120000)) {
+          return res.json(activityCache);
+        }
+
         const keyword = String(payload?.q || '').trim().toLowerCase();
         const filterClassId = String(payload?.class_id || '').trim();
         const filterCategory = String(payload?.category || '').trim();
@@ -3328,7 +3436,6 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
         const { data: activities } = await supabase.from('Activities').select('*');
         const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
 
-        // จัดเรียงลำดับห้องเรียนตามระดับชั้น (อ.1 -> ม.6)
         const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
         if (classes) {
           classes.sort((a, b) => {
@@ -3353,15 +3460,12 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           };
         });
 
-        // 📌 กรองตามห้องเรียน
         if (filterClassId) {
           items = items.filter(x => String(x.class_id) === filterClassId);
         }
-        // 📌 กรองตามประเภทกิจกรรม
         if (filterCategory) {
           items = items.filter(x => String(x.category) === filterCategory);
         }
-        // 📌 กรองตามคำค้นหา
         if (keyword) {
           items = items.filter(x => 
             x.name.toLowerCase().includes(keyword) || 
@@ -3370,7 +3474,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
         }
 
         const todayStr = getTodayThai();
-        return res.json({ 
+        const resultPayload = { 
           ok: true, 
           items, 
           total: items.length, 
@@ -3385,7 +3489,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           categories: ['กิจกรรมหน้าเสาธง', 'กิจกรรมวันสำคัญ', 'ทัศนศึกษา', 'กีฬาสี', 'ลูกเสือ-เนตรนารี', 'ชุมนุม', 'จิตอาสา', 'กิจกรรมอื่น'], 
           classes: (classes || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })), 
           can: { manage: true } 
-        });
+        };
+
+        // 📌 บันทึกลงแคช
+        activityCache = resultPayload;
+        activityCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
 
 case 'activity.attend': {
@@ -3413,7 +3523,7 @@ case 'activity.attend': {
           if (rowsToInsert.length > 0) {
             await supabase.from('ActivityAttendees').insert(rowsToInsert);
           }
-
+          activityCache = null;
           return res.json({ ok: true, joined: joinedCount, total: rowsToInsert.length });
         } catch (err) {
           return res.status(500).json({ ok: false, error: err.message });
