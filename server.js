@@ -1291,10 +1291,16 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
 
     case 'behavior.save': {
         const dataIn = { ...payload };
-        // กรองเอาคอลัมน์หลอกๆ ที่หน้าเว็บแถมมาออกไป ไม่งั้นฐานข้อมูลพัง
+        // กรองเอาคอลัมน์จำลองออก
         ['student', 'class_name', 'homeroom_name', 'tone', 'by', 'icon', 'overdue'].forEach(k => delete dataIn[k]);
 
-        // 📌 แปลงค่าว่างเป็น null และแปลงฟิลด์ตัวเลข (เช่น point) ให้ถูกต้องป้องกัน error bigint
+        // 📌 ดึงปีการศึกษาปัจจุบันอัตโนมัติหากไม่ได้ส่งมา
+        if (!dataIn.year_id) {
+          const { data: activeYear } = await supabase.from('AcademicYears').select('id').eq('is_active', true).maybeSingle();
+          dataIn.year_id = activeYear ? activeYear.id : 'AY-000001';
+        }
+
+        // แปลงค่าว่างเป็น null และแปลงฟิลด์ตัวเลข (เช่น point) ให้ถูกต้อง
         Object.keys(dataIn).forEach(key => {
           if (dataIn[key] === '' || dataIn[key] === undefined) {
             dataIn[key] = null;
@@ -1310,12 +1316,13 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           result = data ? data[0] : dataIn;
         } else {
           dataIn.id = 'BHV-' + Math.floor(100000 + Math.random() * 900000);
-          const { data, error } = await supabase.from('Behaviors').insert([dataIn]).select();
+          const { data, error } = await supabase.from('Behมีaviors').insert([dataIn]).select();
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
+
         await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create', 'Behaviors', result.id, { point: result.point });
-	      execCache = null;
+        execCache = null;
         behaviorCache = null;
         return res.json({ ok: true, item: result });
       }
@@ -1748,14 +1755,19 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
         const dataIn = { ...payload };
         ['class_name', 'attendee_total', 'attendee_joined', 'is_upcoming'].forEach(k => delete dataIn[k]);
 
-        // 📌 ปรับให้ดึงค่าห้องแรกมาเก็บใน class_id (กรณีเลือกหลายห้อง หรือเลือกห้องเดียว)
+        // 📌 ดึงปีการศึกษาปัจจุบันอัตโนมัติหากไม่ได้ส่งมา
+        if (!dataIn.year_id) {
+          const { data: activeYear } = await supabase.from('AcademicYears').select('id').eq('is_active', true).maybeSingle();
+          dataIn.year_id = activeYear ? activeYear.id : 'AY-000001';
+        }
+
+        // ปรับให้ดึงค่าห้องแรกมาเก็บใน class_id
         if (Array.isArray(dataIn.class_ids) && dataIn.class_ids.length > 0) {
-          dataIn.class_id = dataIn.class_ids[0]; // บันท็กรหัสห้องตัวแรก
+          dataIn.class_id = dataIn.class_ids[0];
         } else if (dataIn.class_id) {
           dataIn.class_id = dataIn.class_id;
         }
 
-        // ตัดฟิลด์ class_ids ออกเพื่อป้องกัน Error กรณีที่ใน Supabase ไม่มีคอลัมน์นี้
         delete dataIn.class_ids;
 
         Object.keys(dataIn).forEach(key => {
@@ -1781,10 +1793,14 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
 
       case 'assign.save': {
         const dataIn = { ...payload };
-        // กรองฟิลด์จำลองที่หน้าเว็บแถมมาออก
         ['class_name', 'student_total', 'submitted', 'pending', 'percent', 'state'].forEach(k => delete dataIn[k]);
 
-        // แปลงค่าว่างเป็น null
+        // 📌 ดึงปีการศึกษาปัจจุบันอัตโนมัติหากไม่ได้ส่งมา
+        if (!dataIn.year_id) {
+          const { data: activeYear } = await supabase.from('AcademicYears').select('id').eq('is_active', true).maybeSingle();
+          dataIn.year_id = activeYear ? activeYear.id : 'AY-000001';
+        }
+
         Object.keys(dataIn).forEach(key => {
           if (dataIn[key] === '' || dataIn[key] === undefined) {
             dataIn[key] = null;
