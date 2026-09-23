@@ -535,19 +535,19 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
       
      /* ── STUDENT & PARENT ── */
       case 'student.list': {
-        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const keyword = String(payload?.q || '').trim();
+        const classId = String(payload?.class_id || '').trim();
+
+        // 🚀 ปรับแคชให้ตรวจสอบเงื่อนไข ถ้ามีการค้นหาหรือกรองห้อง ให้ข้ามแคชรวมไปก่อนเพื่อดึงข้อมูลสด
+        const cacheKey = `student_${keyword}_${classId}`;
         const nowTime = Date.now();
-        if (studentCache && (nowTime - studentCacheTime < 120000)) {
+        if (!keyword && !classId && studentCache && (nowTime - studentCacheTime < 120000)) {
           return res.json(studentCache);
         }
 
-        const keyword = String(payload?.q || '').trim();
-        const classId = String(payload?.class_id || '').trim();
-        
         let query = supabase.from('Students').select('*', { count: 'exact' });
         
         if (keyword) {
-          // 📌 ตรวจสอบว่า keyword เป็นตัวเลขหรือไม่ เพื่อป้องกัน Error 'operator does not exist: bigint ~~* unknown'
           if (!isNaN(keyword)) {
             query = query.or(`first_name.ilike.%${keyword}%,last_name.ilike.%${keyword}%,nickname.ilike.%${keyword}%,student_code.eq.${keyword}`);
           } else {
@@ -558,7 +558,6 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
           query = query.eq('class_id', classId);
         }
 
-        // ดึงข้อมูลนักเรียนและข้อมูลห้องเรียนควบคู่กันเพื่อใช้แสดงผลตัวกรองห้องเรียนฝั่งหน้าเว็บ
         const [{ data: students, count, error }, { data: classesData }] = await Promise.all([
           query,
           supabase.from('Classrooms').select('id, level, room, name')
@@ -566,11 +565,8 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
 
         if (error) throw error;
 
-        // 1. กำหนดลำดับชั้นเรียน (ครอบคลุมตั้งแต่ อ.1 ถึง ม.6)
-        const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
         const levelOrderArr = ['อ.1', 'อ.2', 'อ.3', 'ป.1', 'ป.2', 'ป.3', 'ป.4', 'ป.5', 'ป.6', 'ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'];
 
-        // 2. จัดเรียงข้อมูลนักเรียนตามลำดับชั้นเรียนและห้อง
         const sortedStudents = (students || []).sort((a, b) => {
           let indexA = levelOrderArr.indexOf(a.level);
           let indexB = levelOrderArr.indexOf(b.level);
@@ -596,7 +592,6 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
             }
           }
 
-          // สูตรคำนวณอายุที่ถูกต้อง (รองรับทั้ง พ.ศ. และ ค.ศ. ในฐานข้อมูล)
           const birthYear = s.birthdate ? parseInt(String(s.birthdate).split('-')[0], 10) : null;
           const currentYearCE = new Date().getFullYear();
           const calculatedAge = birthYear ? currentYearCE - (birthYear > 2400 ? birthYear - 543 : birthYear) : null;
@@ -626,9 +621,11 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
           } 
         };
 
-        // 📌 บันทึกลงแคชเพื่อเรียกใช้ในรอบถัดไป
-        studentCache = resultPayload;
-        studentCacheTime = Date.now();
+        // 📌 บันทึกแคชเฉพาะกรณีไม่ได้ค้นหาหรือกรอง
+        if (!keyword && !classId) {
+          studentCache = resultPayload;
+          studentCacheTime = Date.now();
+        }
 
         return res.json(resultPayload);
       }
@@ -1610,6 +1607,80 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
         }
         infirmaryCache = null;
         return res.json({ ok: true, item: result });
+      }
+      
+      case 'infirmary.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (infirmaryCache && (nowTime - infirmaryCacheTime < 120000)) {
+          return res.json(infirmaryCache);
+        }
+
+        // 🚀 แก้ไขให้ดึงข้อมูลจากตาราง HealthVisits ให้ตรงกับตอนบันทึก
+        const [
+          infirmaryRes,
+          studentsRes,
+          classesRes
+        ] = await Promise.all([
+          supabase.from('HealthVisits').select('*').order('created_at', { ascending: false }),
+          supabase.from('Students').select('id, prefix, first_name, last_name, class_id, photo_url'),
+          supabase.from('Classrooms').select('id, level, room, name')
+        ]);
+
+        const records = infirmaryRes.data || [];
+        const students = studentsRes.data || [];
+        const classes = classesRes.data || [];
+
+        // จัดเรียงลำดับห้องเรียนตามระดับชั้น
+        const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
+        classes.sort((a, b) => {
+          const lA = levelOrder[String(a.level || '').trim()] || 99;
+          const lB = levelOrder[String(b.level || '').trim()] || 99;
+          if (lA !== lB) return lA - lB;
+          return String(a.room || '').localeCompare(String(b.room || ''), 'th');
+        });
+
+        const studentMap = {}; 
+        students.forEach(s => { studentMap[s.id] = s; });
+        
+        const classMap = {}; 
+        classes.forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
+
+        const items = records.map(r => {
+          const s = studentMap[r.student_id] || {};
+          return {
+            ...r,
+            student: {
+              id: s.id || r.student_id,
+              name: `${s.prefix || ''}${s.first_name || ''} ${s.last_name || ''}`.trim() || 'ไม่พบข้อมูล',
+              class_name: classMap[s.class_id] || '—',
+              photo_url: s.photo_url || ''
+            },
+            tone: r.refer === 'พักผ่อน' ? 'warn' : (r.refer === 'ส่งกลับบ้าน' ? 'bad' : 'ok')
+          };
+        });
+
+        const resultPayload = { 
+          ok: true, 
+          items, 
+          total: items.length, 
+          pages: 1, 
+          page: 1, 
+          kpi: { 
+            total: items.length, 
+            today: items.filter(x => String(x.date || '').startsWith(getTodayThai())).length, 
+            resting: items.filter(x => x.refer === 'พักผ่อน').length, 
+            sent_home: items.filter(x => x.refer === 'ส่งกลับบ้าน').length 
+          }, 
+          classes: classes.map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })), 
+          can: { manage: true } 
+        };
+
+        // 📌 บันทึกลงแคช
+        infirmaryCache = resultPayload;
+        infirmaryCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
 
       case 'infirmary.delete': {
@@ -2705,9 +2776,12 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
       }
 
       case 'behavior.list': {
-        // ตรวจสอบแคชในหน่วยความจำ
+        const keyword = String(payload?.q || '').trim();
+        const classId = String(payload?.class_id || '').trim();
+
+        // 🚀 ตรวจสอบแคช (ถ้ามีการใช้ตัวกรอง ให้ข้ามแคชเพื่อดึงข้อมูลสดตามเงื่อนไข)
         const nowTime = Date.now();
-        if (behaviorCache && (nowTime - behaviorCacheTime < 120000)) {
+        if (!keyword && !classId && behaviorCache && (nowTime - behaviorCacheTime < 120000)) {
           return res.json(behaviorCache);
         }
 
@@ -2749,8 +2823,24 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           classMap[c.id] = c.name || `${c.level}/${c.room}`;
         });
 
+        // 📌 กรองข้อมูลตามห้องเรียน (class_id) และคำค้นหา (q) ที่ส่งมาจากหน้าเว็บ
+        let filteredBehaviors = behaviors;
+        if (classId) {
+          filteredBehaviors = filteredBehaviors.filter(b => {
+            const s = studentMap[b.student_id];
+            return s && String(s.class_id) === String(classId);
+          });
+        }
+
+        if (keyword) {
+          filteredBehaviors = filteredBehaviors.filter(b => {
+            const s = studentMap[b.student_id] || { name: '' };
+            return s.name.includes(keyword) || String(b.behavior_name || '').includes(keyword) || String(b.note || '').includes(keyword);
+          });
+        }
+
         let typeCountMap = {};
-        behaviors.forEach(b => {
+        filteredBehaviors.forEach(b => {
           let tp = b.type || 'พฤติกรรมทั่วไป';
           typeCountMap[tp] = (typeCountMap[tp] || 0) + 1;
         });
@@ -2764,7 +2854,7 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           return { label: k, value: typeCountMap[k], tone: tone };
         });
 
-        const items = behaviors.map(b => {
+        const items = filteredBehaviors.map(b => {
           const s = studentMap[b.student_id] || { name: 'ไม่พบข้อมูล', class_id: null };
           return {
             ...b,
@@ -2798,9 +2888,11 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           can: { manage: true }
         };
 
-        // 📌 บันทึกลงแคช
-        behaviorCache = resultPayload;
-        behaviorCacheTime = Date.now();
+        // 📌 บันทึกลงแคชเฉพาะกรณีที่ไม่มีการกรองข้อมูล
+        if (!keyword && !classId) {
+          behaviorCache = resultPayload;
+          behaviorCacheTime = Date.now();
+        }
 
         return res.json(resultPayload);
       }
@@ -3180,91 +3272,17 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
         return res.json(resultPayload);
       }
 
-      case 'infirmary.list': {
-        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
-        const nowTime = Date.now();
-        if (infirmaryCache && (nowTime - infirmaryCacheTime < 120000)) {
-          return res.json(infirmaryCache);
-        }
-
-        // 🚀 ดึงข้อมูลห้องพยาบาล, นักเรียน และห้องเรียนพร้อมกันด้วย Promise.all
-        const [
-          infirmaryRes,
-          studentsRes,
-          classesRes
-        ] = await Promise.all([
-          supabase.from('Infirmary').select('*').order('created_at', { ascending: false }),
-          supabase.from('Students').select('id, prefix, first_name, last_name, class_id, photo_url'),
-          supabase.from('Classrooms').select('id, level, room, name')
-        ]);
-
-        const records = infirmaryRes.data || [];
-        const students = studentsRes.data || [];
-        const classes = classesRes.data || [];
-
-        // จัดเรียงลำดับห้องเรียนตามระดับชั้น
-        const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
-        classes.sort((a, b) => {
-          const lA = levelOrder[String(a.level || '').trim()] || 99;
-          const lB = levelOrder[String(b.level || '').trim()] || 99;
-          if (lA !== lB) return lA - lB;
-          return String(a.room || '').localeCompare(String(b.room || ''), 'th');
-        });
-
-        const studentMap = {}; 
-        students.forEach(s => { studentMap[s.id] = s; });
-        
-        const classMap = {}; 
-        classes.forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
-
-        const items = records.map(r => {
-          const s = studentMap[r.student_id] || {};
-          return {
-            ...r,
-            student: {
-              id: s.id || r.student_id,
-              name: `${s.prefix || ''}${s.first_name || ''} ${s.last_name || ''}`.trim() || 'ไม่พบข้อมูล',
-              class_name: classMap[s.class_id] || '—',
-              photo_url: s.photo_url || ''
-            },
-            tone: r.status === 'พักผ่อน' ? 'warn' : (r.status === 'ส่งกลับบ้าน' ? 'bad' : 'ok')
-          };
-        });
-
-        const resultPayload = { 
-          ok: true, 
-          items, 
-          total: items.length, 
-          pages: 1, 
-          page: 1, 
-          kpi: { 
-            total: items.length, 
-            today: items.filter(x => String(x.date || '').startsWith(getTodayThai())).length, 
-            resting: items.filter(x => x.status === 'พักผ่อน').length, 
-            sent_home: items.filter(x => x.status === 'ส่งกลับบ้าน').length 
-          }, 
-          classes: classes.map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })), 
-          can: { manage: true } 
-        };
-
-        // 📌 บันทึกลงแคช
-        infirmaryCache = resultPayload;
-        infirmaryCacheTime = Date.now();
-
-        return res.json(resultPayload);
-      }
-
       case 'case.list': {
-        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
-        const nowTime = Date.now();
-        if (caseCache && (nowTime - caseCacheTime < 120000)) {
-          return res.json(caseCache);
-        }
-
         const keyword = String(payload?.q || '').trim().toLowerCase();
         const filterClassId = String(payload?.class_id || '').trim();
         const filterStatus = String(payload?.status || '').trim();
         const filterLevel = String(payload?.level || '').trim();
+
+        // 🚀 ตรวจสอบแคช (ถ้ามีการใช้งานตัวกรองหรือคำค้นหา ให้ข้ามแคชเพื่อดึงข้อมูลสดตามเงื่อนไข)
+        const nowTime = Date.now();
+        if (!keyword && !filterClassId && !filterStatus && !filterLevel && caseCache && (nowTime - caseCacheTime < 120000)) {
+          return res.json(caseCache);
+        }
 
         // 🚀 ดึงข้อมูลทุกตารางพร้อมกันด้วย Promise.all เพื่อความเร็วสูงสุด
         const [
@@ -3371,9 +3389,11 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           can: { manage: true } 
         };
 
-        // 📌 บันทึกลงแคชเพื่อเรียกใช้ในครั้งถัดไปให้รวดเร็ว
-        caseCache = resultPayload;
-        caseCacheTime = Date.now();
+        // 📌 บันทึกลงแคชเฉพาะกรณีที่ไม่มีการกรองหรือค้นหาใดๆ
+        if (!keyword && !filterClassId && !filterStatus && !filterLevel) {
+          caseCache = resultPayload;
+          caseCacheTime = Date.now();
+        }
 
         return res.json(resultPayload);
       }
