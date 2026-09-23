@@ -12,6 +12,8 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+let execCache = null;
+let execCacheTime = 0;
 
 // ฟังก์ชันตรวจสอบ Token แบบยืดหยุ่น ป้องกันการหลุดหน้าจอ
 async function verifyToken(token) {
@@ -815,6 +817,7 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
           }
         }
 await writeAudit(currentUser, dataIn.id ? 'student.update' : 'student.create', 'Students', result.id, { name: `${result.first_name || ''} ${result.last_name || ''}`.trim() });
+	execCache = null;
         return res.json({ ok: true, item: result });
       }
 
@@ -1248,6 +1251,7 @@ case 'year.save': {
           savedCount++;
         }
 await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date: date, total: savedCount });
+	execCache = null;
         return res.json({ ok: true, saved: savedCount });
       }
 
@@ -1277,6 +1281,7 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           result = data ? data[0] : dataIn;
         }
 await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create', 'Behaviors', result.id, { point: result.point });
+	execCache = null;
         return res.json({ ok: true, item: result });
       }
       
@@ -1341,6 +1346,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
+	execCache = null;
         return res.json({ ok: true, item: result });
       }
 
@@ -3685,6 +3691,12 @@ case 'activity.attend': {
       }
 
       case 'exec.dashboard': {
+        // ตรวจสอบว่ามีแคชในหน่วยความจำและยังไม่หมดอายุ (120,000 มิลลิวินาที = 2 นาที)
+        const nowTime = Date.now();
+        if (execCache && (nowTime - execCacheTime < 120000)) {
+          return res.json(execCache);
+        }
+
         const todayStr = getTodayThai();
         let totalStudents = 0, maleCount = 0, femaleCount = 0, totalClasses = 0, totalTeachers = 0;
         
@@ -3757,7 +3769,6 @@ case 'activity.attend': {
             };
           });
 
-          // 📌 เพิ่มการจัดเรียงลำดับห้องเรียนตามระดับชั้น (อ.1 -> อ.3, ป.1 -> ป.6, ม.1 -> ม.3)
           const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
           classProgress.sort((a, b) => {
             const lA = levelOrder[String(a.level || '').trim()] || 99;
@@ -3772,7 +3783,6 @@ case 'activity.attend': {
           ? Object.keys(levelDistMap).map(k => ({ label: k, value: levelDistMap[k], tone: 'info' }))
           : [{ label: 'ทั้งหมด', value: totalStudents, tone: 'ok' }];
 
-        // ดึงสัดส่วนพฤติกรรมภาพรวมโรงเรียน พร้อมข้อมูลสำรอง (Fallback)
         let behaviorMap = {};
         let behaviorTotal = 0;
         try {
@@ -3788,7 +3798,7 @@ case 'activity.attend': {
           ? Object.keys(behaviorMap).map(k => ({ 
               label: k, 
               value: behaviorMap[k], 
-              tone: getBehaviorTone(k) // 📌 ปรับมาเรียกใช้ฟังก์ชันกำหนดสีกลาง
+              tone: getBehaviorTone(k) 
             }))
           : [
               { label: 'พฤติกรรมเชิงบวก', value: 10, tone: 'ok' },
@@ -3814,7 +3824,8 @@ case 'activity.attend': {
           }
         } catch (e) {}
 
-        return res.json({ 
+        // 📌 สร้างก้อนข้อมูลสำหรับส่งกลับ
+        const resultPayload = { 
           ok: true, 
           date: todayStr,
           data: [],
@@ -3834,7 +3845,13 @@ case 'activity.attend': {
           level_dist: levelDistArray,
           behavior: behaviorList,
           behavior_total: behaviorTotal
-        });
+        };
+
+        // 📌 บันทึกลงตัวแปรแคชไว้ใช้รอบถัดไป
+        execCache = resultPayload;
+        execCacheTime = Date.now();
+
+        return res.json(resultPayload);
        }
 
       case 'audit.list': {
