@@ -5,9 +5,10 @@ const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
-
+const compression = require('compression');
 const app = express();
 app.use(cors());
+app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -88,8 +89,6 @@ async function writeAudit(user, action, entity, entityId, detail) {
   }
 }
 
-app.use(express.static(path.join(__dirname, 'public'), { index: false }));
-
 // 📌 นำฟังก์ชันจัดเรียงห้องเรียนมาวางไว้ตรงนี้
 const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
 
@@ -103,7 +102,11 @@ function sortClasses(classesArr) {
   });
 }
 
-app.use(express.static(path.join(__dirname, 'public'), { index: false }));
+// 📌 รูปแบบที่ถูกต้องครบถ้วน
+app.use(express.static(path.join(__dirname, 'public'), { 
+  maxAge: '1d', 
+  index: false 
+}));
 
 // 📌 ปรับปรุงฟังก์ชัน renderHtml ให้ดึงค่า Settings จาก Supabase มาฝังลงในหน้าเว็บโดยอัตโนมัติ
 async function renderHtml(fileName) {
