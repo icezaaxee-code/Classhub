@@ -3084,10 +3084,6 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
         });
       }
 
-      // 📌 ประกาศตัวแปรแคชสำหรับหน้ารายการเคสช่วยเหลือนักเรียน
-      let caseCache = null;
-      let caseCacheTime = 0;
-
       case 'case.list': {
         // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
         const nowTime = Date.now();
