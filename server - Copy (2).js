@@ -558,29 +558,23 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
           query = query.eq('class_id', classId);
         }
 
-        // ดึงข้อมูลนักเรียนและข้อมูลห้องเรียนควบคู่กันเพื่อใช้แสดงผลตัวกรองห้องเรียนฝั่งหน้าเว็บ
-        const [{ data: students, count, error }, { data: classesData }] = await Promise.all([
-          query,
-          supabase.from('Classrooms').select('id, level, room, name')
-        ]);
-
+        const { data: students, count, error } = await query;
         if (error) throw error;
 
-        // 1. กำหนดลำดับชั้นเรียน (ครอบคลุมตั้งแต่ อ.1 ถึง ม.6)
-        const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
-        const levelOrderArr = ['อ.1', 'อ.2', 'อ.3', 'ป.1', 'ป.2', 'ป.3', 'ป.4', 'ป.5', 'ป.6', 'ม.1', 'ม.2', 'ม.3', 'ม.4', 'ม.5', 'ม.6'];
+        // 1. กำหนดลำดับชั้นเรียน (จาก อ.1 ถึง ม.3)
+        const levelOrder = ['อ.1', 'อ.2', 'อ.3', 'ป.1', 'ป.2', 'ป.3', 'ป.4', 'ป.5', 'ป.6', 'ม.1', 'ม.2', 'ม.3'];
 
         // 2. จัดเรียงข้อมูลนักเรียนตามลำดับชั้นเรียนและห้อง
         const sortedStudents = (students || []).sort((a, b) => {
-          let indexA = levelOrderArr.indexOf(a.level);
-          let indexB = levelOrderArr.indexOf(b.level);
+          let indexA = levelOrder.indexOf(a.level);
+          let indexB = levelOrder.indexOf(b.level);
           if (indexA === -1) indexA = 99;
           if (indexB === -1) indexB = 99;
           
           if (indexA !== indexB) {
             return indexA - indexB;
           }
-          return (Number(a.room) || 0) - (Number(b.room) || 0);
+          return (a.room || 0) - (b.room || 0);
         });
 
         const items = sortedStudents.map(s => {
@@ -604,7 +598,7 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
           return {
             ...s,
             birthdate: formattedBirthdate,
-            full_name: `${s.prefix || ''}${s.first_name || ''} ${s.last_name || ''}`.trim(),
+            full_name: `${s.prefix || ''}${s.first_name} ${s.last_name}`.trim(),
             age: calculatedAge
           };
         });
@@ -616,7 +610,6 @@ await writeAudit(user, 'auth.login', 'Users', user.id, { role: user.role });
           page: 1, 
           pages: 1, 
           can: { manage: true, import: true, export: true }, 
-          classes: (classesData || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })),
           kpi: { 
             total: count || items.length, 
             male: items.filter(s => s.gender === 'ชาย').length, 
@@ -1043,18 +1036,16 @@ case 'year.save': {
       }
 
       case 'attendance.sheet': {
-        // 1. ดึงข้อมูลห้องเรียนทั้งหมด (ข้อมูลน้อย โหลดเร็ว)
+        // 1. ดึงข้อมูลห้องเรียนทั้งหมด
         const { data: classesData } = await supabase.from('Classrooms').select('*');
         const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
         
-        if (classesData) {
-          classesData.sort((a, b) => {
-            const lA = levelOrder[String(a.level || '').trim()] || 99;
-            const lB = levelOrder[String(b.level || '').trim()] || 99;
-            if (lA !== lB) return lA - lB;
-            return String(a.room || '').localeCompare(String(b.room || ''), 'th');
-          });
-        }
+        classesData?.sort((a, b) => {
+          const lA = levelOrder[a.level] || 99;
+          const lB = levelOrder[b.level] || 99;
+          if (lA !== lB) return lA - lB;
+          return String(a.room || '').localeCompare(String(b.room || ''));
+        });
         
         const classesList = (classesData || []).map(c => ({
           id: c.id,
@@ -1066,18 +1057,28 @@ case 'year.save': {
         const targetClassInfo = classesData?.find(c => c.id === targetClassId);
         const targetClassName = targetClassInfo ? (targetClassInfo.name || `${targetClassInfo.level}/${targetClassInfo.room}`) : 'กรุณาเลือกห้องเรียน';
 
-        // 3. 📌 ดึงเฉพาะนักเรียนในห้องที่เลือก (หรือดึงทั้งหมดเฉพาะเมื่อไม่มีห้อง) เพื่อความเร็วสูงสุด
-        let query = supabase.from('Students').select('id, prefix, first_name, last_name, nickname, number, class_id, photo_url, status');
-        if (targetClassId) {
-          query = query.eq('class_id', targetClassId);
-        }
-        const { data: roomStudents } = await query;
+        // 3. ดึงนักเรียนทั้งหมดในระบบมาเทียบ
+        const { data: allStudents } = await supabase.from('Students').select('*');
+        
+        // 4. กรองนักเรียนให้ตรงกับห้องที่เลือก (รองรับทั้ง class_id และ level)
+        let roomStudents = (allStudents || []).filter(s => {
+          if (!targetClassId) return false;
+          return String(s.class_id || '').trim() === String(targetClassId).trim() ||
+                 String(s.class_id || '').trim() === String(targetClassName).trim() ||
+                 String(s.level || '').trim() === String(targetClassInfo?.level || '').trim();
+        });
 
-        // 4. แมปข้อมูลให้ครอบคลุมฟิลด์ที่หน้าเว็บใช้งาน
-        const items = (roomStudents || []).map((s, index) => {
+        // ถ้ากรองแล้วไม่พบ ให้ดึงทั้งหมดมาแสดงกันเหนียว
+        if (!roomStudents || roomStudents.length === 0) {
+          roomStudents = allStudents || [];
+        }
+
+        // 5. แมปข้อมูลให้ครอบคลุมทุกฟิลด์ที่หน้าเว็บ (ScriptsPages2.html) อาจเรียกใช้
+        const items = roomStudents.map((s, index) => {
           const fullName = `${s.prefix || ''}${s.first_name || ''} ${s.last_name || ''}`.trim();
           return {
             ...s,
+            id: s.id,
             student_id: s.id,
             name: fullName,
             full_name: fullName,
@@ -1116,14 +1117,12 @@ case 'year.save': {
         const { data: classesData } = await supabase.from('Classrooms').select('*');
         const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
         
-        if (classesData) {
-          classesData.sort((a, b) => {
-            const lA = levelOrder[String(a.level || '').trim()] || 99;
-            const lB = levelOrder[String(b.level || '').trim()] || 99;
-            if (lA !== lB) return lA - lB;
-            return String(a.room || '').localeCompare(String(b.room || ''), 'th');
-          });
-        }
+        classesData?.sort((a, b) => {
+          const lA = levelOrder[a.level] || 99;
+          const lB = levelOrder[b.level] || 99;
+          if (lA !== lB) return lA - lB;
+          return String(a.room || '').localeCompare(String(b.room || ''));
+        });
         
         const classesList = (classesData || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` }));
 
@@ -1138,20 +1137,19 @@ case 'year.save': {
         const fromDate = payload?.from || defaultFrom.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
         const toDate = payload?.to || todayIso;
 
-        // 3. 📌 ดึงเฉพาะนักเรียนในห้องที่เลือก (ประหยัดหน่วยความจำและไวขึ้น)
-        let studentQuery = supabase.from('Students').select('*');
-        if (targetClassId) {
-          studentQuery = studentQuery.eq('class_id', targetClassId);
-        }
-        const { data: roomStudents } = await studentQuery;
-        const studentsList = (roomStudents && roomStudents.length > 0) ? roomStudents : [];
+        // 3. ดึงรายชื่อนักเรียนทั้งหมด
+        const { data: allStudents } = await supabase.from('Students').select('*');
+        const roomStudents = (allStudents || []).filter(s => {
+          if (!targetClassId) return true; // ถ้าไม่ได้กรอง ให้ดึงทั้งหมดมาแสดงป้องกันข้อมูลหาย
+          return String(s.class_id || '').trim() === String(targetClassId).trim() ||
+                 String(s.class_id || '').trim() === String(targetClassName).trim() ||
+                 String(s.level || '').trim() === String(targetClassInfo?.level || '').trim();
+        });
+        
+        const studentsList = roomStudents.length > 0 ? roomStudents : allStudents || [];
 
-        // 4. 📌 ดึงข้อมูลการเช็กชื่อเฉพาะในช่วงวันที่เลือกเท่านั้น (ไม่ดึงทั้งหมด เพื่อป้องกันระบบหน่วงในอนาคต)
-        const { data: attRecords } = await supabase
-          .from('Attendance')
-          .select('*')
-          .gte('date', fromDate)
-          .lte('date', toDate);
+        // 4. ดึงข้อมูลการเช็กชื่อทั้งหมดจากตาราง Attendance แบบไม่จำกัดกรอบวันที่ เพื่อดึงข้อมูลล่าสุดที่เพิ่งบันทึกมาโชว์ทันที
+        const { data: attRecords } = await supabase.from('Attendance').select('*');
 
         // 5. สร้างรายการวันที่ทั้งหมดในช่วงเวลา
         const datesArr = [];
@@ -1172,14 +1170,14 @@ case 'year.save': {
           datesArr.forEach(dt => {
             const record = (attRecords || []).find(r => 
               (String(r.student_id) === String(s.id) || String(r.student_id) === String(s.student_code)) && 
-              String(r.date || r.target_date || '').slice(0, 10) === dt
+              String(r.date).slice(0, 10) === dt
             );
             
             if (record) {
               daysMap[dt] = record.status;
               if (record.status === 'มา') p++;
               else if (record.status === 'ขาด') a++;
-              else if (record.status === 'มาสาย' || record.status === 'สาย') l++;
+              else if (record.status === 'มาสาย') l++;
             }
           });
 
@@ -2693,18 +2691,16 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
       }
 
       case 'behavior.list': {
-        // ตรวจสอบแคชในหน่วยความจำ
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
         const nowTime = Date.now();
         if (behaviorCache && (nowTime - behaviorCacheTime < 120000)) {
           return res.json(behaviorCache);
         }
 
-        // 📌 ใช้ RPC ดึงข้อมูลพฤติกรรมพร้อมชื่อนักเรียนและห้องจากฐานข้อมูลทีเดียวจบ (รวดเร็วกว่าเดิมมาก)
-        const { data: behaviors, error } = await supabase.rpc('get_behaviors_with_student');
-        if (error) throw error;
-
-        // ดึงข้อมูลห้องเรียนมาทำตัวกรอง (Filters) ด้านบนหน้าเว็บ
+        const { data: behaviors } = await supabase.from('Behaviors').select('*');
+        const { data: students } = await supabase.from('Students').select('id, student_code, prefix, first_name, last_name, nickname, number, class_id, photo_url, watch_level');
         const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
+        const { data: users } = await supabase.from('Users').select('id, full_name');
 
         const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
         if (classes) {
@@ -2716,6 +2712,10 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           });
         }
 
+        const studentMap = {}; (students || []).forEach(s => { studentMap[s.id] = s; });
+        const classMap = {}; (classes || []).forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
+        const userMap = {}; (users || []).forEach(u => { userMap[u.id] = u.full_name; });
+
         let typeCountMap = {};
         (behaviors || []).forEach(b => {
           let tp = b.type || 'พฤติกรรมทั่วไป';
@@ -2724,23 +2724,36 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
 
         const byTypeArray = Object.keys(typeCountMap).map(k => {
           let tone = 'info';
-          if (k.includes('บวก') || k.includes('ชม')) tone = 'ok';
-          else if (k.includes('ติดตาม')) tone = 'warn';
-          else if (k.includes('ผิดระเบียบ')) tone = 'bad';
-          else if (k.includes('รางวัล')) tone = 'acc';
+          if (k.includes('บวก') || k.includes('ชม')) {
+            tone = 'ok';
+          } else if (k.includes('ติดตาม')) {
+            tone = 'warn';
+          } else if (k.includes('ผิดระเบียบ')) {
+            tone = 'bad';
+          } else if (k.includes('รางวัล')) {
+            tone = 'acc';
+          }
           return { label: k, value: typeCountMap[k], tone: tone };
         });
 
-        const items = (behaviors || []).map(b => ({
-          ...b,
-          student: {
-            id: b.student_id,
-            name: b.student_name || 'ไม่พบข้อมูล',
-            class_name: b.class_name || '—'
-          },
-          tone: (b.point || 0) >= 0 ? 'ok' : 'bad',
-          by: 'ระบบ'
-        }));
+        const items = (behaviors || []).map(b => {
+          const s = studentMap[b.student_id] || {};
+          return {
+            ...b,
+            student: {
+              id: s.id || b.student_id,
+              name: `${s.prefix || ''}${s.first_name || ''} ${s.last_name || ''}`.trim() || 'ไม่พบข้อมูล',
+              nickname: s.nickname || '',
+              number: s.number || '',
+              class_id: s.class_id || '',
+              class_name: classMap[s.class_id] || '—',
+              photo_url: s.photo_url || '',
+              watch_level: s.watch_level || 'ทั่วไป'
+            },
+            tone: b.point >= 0 ? 'ok' : 'bad',
+            by: userMap[b.created_by] || b.created_by || 'ระบบ'
+          };
+        });
 
         const resultPayload = { 
           ok: true, 
@@ -2751,7 +2764,7 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           kpi: { 
             total: items.length, 
             positive: items.filter(x => (x.point || 0) >= 0).length, 
-            watch: 0, 
+            watch: items.filter(x => x.severity === 'ปานกลาง').length, 
             violation: items.filter(x => x.severity === 'มาก').length, 
             point: items.reduce((acc, x) => acc + (Number(x.point) || 0), 0) 
           },
@@ -2780,8 +2793,7 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
         const filterClassId = String(payload?.class_id || '').trim();
         const filterStatus = String(payload?.status || '').trim();
 
-        // 📌 เลือกดึงเฉพาะคอลัมน์ที่จำเป็น ลดขนาดข้อมูลและเพิ่มความเร็วในการดึงข้อมูลจาก Supabase
-        const { data: visits } = await supabase.from('HomeVisits').select('id, student_id, status, summary, note, visit_date, created_by, created_at');
+        const { data: visits } = await supabase.from('HomeVisits').select('*');
         const { data: students } = await supabase.from('Students').select('id, prefix, first_name, last_name, nickname, number, class_id, photo_url, watch_level');
         const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
         const { data: users } = await supabase.from('Users').select('id, full_name');
@@ -2986,64 +2998,15 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
       }
 
       case 'assign.list': {
-        // 1. ดึงข้อมูลห้องเรียนทั้งหมดเพื่อใช้ทำตัวกรอง
-        const { data: classesData } = await supabase.from('Classrooms').select('*');
-        const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
-        
-        if (classesData) {
-          classesData.sort((a, b) => {
-            const lA = levelOrder[String(a.level || '').trim()] || 99;
-            const lB = levelOrder[String(b.level || '').trim()] || 99;
-            if (lA !== lB) return lA - lB;
-            return String(a.room || '').localeCompare(String(b.room || ''), 'th');
-          });
-        }
-        
-        const classesList = (classesData || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` }));
-
-        // 2. ดึงรายการงาน/การบ้านทั้งหมด (จำกัดฟิลด์หรือเรียงลำดับจากล่าสุดขึ้นก่อนเพื่อให้โหลดไว)
-        const { data: assignmentsData, error: assignError } = await supabase
-          .from('Assignments')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (assignError) throw assignError;
-
-        // 3. ดึงข้อมูลการส่งงาน (Submissions) แบบจำกัดปริมาณหรือดึงเฉพาะฟิลด์สำคัญเพื่อลดขนาดข้อมูล
-        const { data: submissionsData } = await supabase
-          .from('Submissions')
-          .select('id, assignment_id, student_id, status, score, updated_at');
-
-        // 4. ประมวลผลจับคู่สถานะและสรุปผลสถิติการส่งงาน
-        const items = (assignmentsData || []).map(item => {
-          const subs = (submissionsData || []).filter(s => String(s.assignment_id) === String(item.id));
-          const submittedCount = subs.filter(s => s.status === 'ส่งแล้ว' || s.status === 'ตรวจแล้ว' || (s.score !== null && s.score !== undefined)).length;
-          
-          return {
-            ...item,
-            total_submitted: submittedCount,
-            submissions_count: subs.length
-          };
-        });
-
-        // คำนวณ KPI ภาพรวมการบ้าน
-        const totalAssignments = items.length;
-        const activeAssignments = items.filter(x => x.status === 'เปิดรับ' || !x.status).length;
-
-        const resultPayload = {
-          ok: true,
-          items: items,
-          total: totalAssignments,
-          kpi: {
-            total: totalAssignments,
-            active: activeAssignments,
-            completed: totalAssignments - activeAssignments
-          },
-          classes: classesList,
-          can: { manage: true }
-        };
-
-        return res.json(resultPayload);
+        const { data: assigns } = await supabase.from('Assignments').select('*');
+        const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
+        const classMap = {}; (classes || []).forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
+        const items = (assigns || []).map(a => ({
+          ...a,
+          class_name: classMap[a.class_id] || '—',
+          student_total: 0, submitted: 0, pending: 0, percent: 0, state: 'open'
+        }));
+        return res.json({ ok: true, items, total: items.length, pages: 1, page: 1, kpi: { total: items.length, today: 0, due_soon: 0, overdue: 0, pending_students: 0 }, classes: (classes || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })), can: { manage: true } });
       }
 
       case 'event.list': {
@@ -3147,7 +3110,9 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
         const keyword = String(payload?.q || '').trim().toLowerCase();
         const filterClassId = String(payload?.class_id || '').trim();
 
-        const { data: visits } = await supabase.rpc('get_infirmary_with_student');
+        const { data: visits } = await supabase.from('HealthVisits').select('*');
+        const { data: students } = await supabase.from('Students').select('id, prefix, first_name, last_name, nickname, number, class_id, photo_url');
+        const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
         
         // จัดเรียงลำดับห้องเรียนตามระดับชั้น
         const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
@@ -3333,7 +3298,9 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           return res.json(contactCache);
         }
 
-        const { data: contacts } = await supabase.rpc('get_contacts_with_student');
+        const { data: contacts } = await supabase.from('ParentContacts').select('*');
+        const { data: students } = await supabase.from('Students').select('id, prefix, first_name, last_name, nickname, number, class_id, photo_url');
+        const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
         const studentMap = {}; (students || []).forEach(s => { studentMap[s.id] = s; });
         const classMap = {}; (classes || []).forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
 
@@ -3600,60 +3567,28 @@ case 'activity.attend': {
       }
 
       case 'home.dashboard': {
-        // 📌 ตรวจสอบแคชในหน่วยความจำ (อายุแคช 1 นาที = 60,000 มิลลิวินาที) เพื่อให้หน้าแรกเปิดไวสุดๆ
-        const nowTime = Date.now();
-        if (global.dashboardCache && (nowTime - global.dashboardCacheTime < 60000)) {
-          return res.json(global.dashboardCache);
-        }
-
         const todayStr = getTodayThai();
         const currentMonthPrefix = todayStr.slice(0, 7);
 
-        // 🚀 ดึงข้อมูลทุกตารางพร้อมกันด้วย Promise.all เพื่อลดเวลา Latency ของเครือข่ายลงหลายเท่า
-        const [
-          studentsRes,
-          attendanceRes,
-          casesRes,
-          visitsRes,
-          contactsRes,
-          assignsRes,
-          logsRes,
-          allStudentsLogRes,
-          behLogsRes,
-          visitLogsRes,
-          contactLogsRes,
-          caseLogsRes,
-          clsLogsRes,
-          eventsRes,
-          allAttRes,
-          behRes,
-          activeYearRes
-        ] = await Promise.all([
-          supabase.from('Students').select('id, gender, watch_level, prefix, first_name, last_name, photo_url, class_id').eq('status', 'กำลังศึกษา'),
-          supabase.from('Attendance').select('status').eq('date', todayStr),
-          supabase.from('StudentCases').select('id', { count: 'exact', head: true }).neq('status', 'ปิดเคส'),
-          supabase.from('HomeVisits').select('id', { count: 'exact', head: true }),
-          supabase.from('ParentContacts').select('date'),
-          supabase.from('Assignments').select('id, title, subject, due_date').order('due_date', { ascending: true }).limit(5),
-          supabase.from('AuditLogs').select('action, entity, entity_id, username, at').order('at', { ascending: false }).limit(8),
-          supabase.from('Students').select('id, prefix, first_name, last_name'),
-          supabase.from('Behaviors').select('id, student_id, title, type'),
-          supabase.from('HomeVisits').select('id, student_id'),
-          supabase.from('ParentContacts').select('id, student_id, subject'),
-          supabase.from('StudentCases').select('id, student_id, problem'),
-          supabase.from('Classrooms').select('id, level, room, name'),
-          supabase.from('CalendarEvents').select('id, title, date, time_start, place').gte('date', todayStr).order('date', { ascending: true }).limit(5),
-          supabase.from('Attendance').select('date, status'),
-          supabase.from('Behaviors').select('type, point'),
-          supabase.from('AcademicYears').select('label').eq('is_active', true).maybeSingle()
-        ]);
+        let totalStudents = 0, maleCount = 0, femaleCount = 0, studentsList = [];
+        try {
+          // 🚀 ปรับแต่ง: ดึงเฉพาะคอลัมน์ที่ต้องใช้แสดงผลและคำนวณ แทนการดึงทั้งหมด
+          const { data: studentsData } = await supabase.from('Students')
+            .select('id, gender, watch_level, prefix, first_name, last_name, photo_url, class_id')
+            .eq('status', 'กำลังศึกษา');
+          studentsList = studentsData || [];
+          totalStudents = studentsList.length;
+          maleCount = studentsList.filter(s => s.gender === 'ชาย').length;
+          femaleCount = studentsList.filter(s => s.gender === 'หญิง').length;
+        } catch (e) {}
+        
+        let todayAttendance = [];
+        try {
+          // 🚀 ปรับแต่ง: ดึงแค่สถานะเพื่อนำมานับจำนวน
+          const { data } = await supabase.from('Attendance').select('status').eq('date', todayStr);
+          todayAttendance = data || [];
+        } catch (e) {}
 
-        const studentsList = studentsRes.data || [];
-        const totalStudents = studentsList.length;
-        const maleCount = studentsList.filter(s => s.gender === 'ชาย').length;
-        const femaleCount = studentsList.filter(s => s.gender === 'หญิง').length;
-
-        const todayAttendance = attendanceRes.data || [];
         let presentCount = 0, absentCount = 0, sickCount = 0, leaveCount = 0, lateCount = 0;
         todayAttendance.forEach(att => {
           if (att.status === 'มา') presentCount++;
@@ -3667,11 +3602,25 @@ case 'activity.attend': {
           presentCount = totalStudents;
         }
 
-        const openCasesCount = casesRes.count || 0;
-        const visitsCount = visitsRes.count || 0;
-        const contactsMonthCount = (contactsRes.data || []).filter(c => String(c.date || '').startsWith(currentMonthPrefix)).length;
+        let openCasesCount = 0;
+        try {
+          const { count } = await supabase.from('StudentCases').select('id', { count: 'exact', head: true }).neq('status', 'ปิดเคส');
+          openCasesCount = count || 0;
+        } catch (e) {}
 
-        const watchStudents = studentsList.filter(s => s.watch_level && s.watch_level !== 'ทั่วไป').map(s => ({
+        let visitsCount = 0;
+        try {
+          const { count } = await supabase.from('HomeVisits').select('id', { count: 'exact', head: true });
+          visitsCount = count || 0;
+        } catch (e) {}
+
+        let contactsMonthCount = 0;
+        try {
+          const { data: contactsData } = await supabase.from('ParentContacts').select('date');
+          contactsMonthCount = (contactsData || []).filter(c => String(c.date || '').startsWith(currentMonthPrefix)).length;
+        } catch (e) {}
+
+        let watchStudents = studentsList.filter(s => s.watch_level && s.watch_level !== 'ทั่วไป').map(s => ({
           id: s.id,
           name: `${s.prefix || ''}${s.first_name || ''} ${s.last_name || ''}`.trim(),
           watch_level: s.watch_level || 'เฝ้าระวัง',
@@ -3679,134 +3628,187 @@ case 'activity.attend': {
           class_name: s.class_id || ''
         }));
 
-        const tasksList = (assignsRes.data || []).map(a => ({
-          id: a.id,
-          title: a.title,
-          sub: `${a.subject || 'ทั่วไป'} · กำหนดส่ง ${a.due_date || '-'}`,
-          due: a.due_date,
-          tone: a.due_date && new Date(a.due_date) < new Date() ? 'bad' : 'warn',
-          icon: 'journal-check',
-          link: '#/assigns'
-        }));
+        let tasksList = [];
+        try {
+          // 🚀 ปรับแต่ง: ดึงเฉพาะคอลัมน์ที่แสดงในการ์ดแจ้งเตือน
+          const { data: assigns } = await supabase.from('Assignments')
+            .select('id, title, subject, due_date')
+            .order('due_date', { ascending: true }).limit(5);
+          tasksList = (assigns || []).map(a => ({
+            id: a.id,
+            title: a.title,
+            sub: `${a.subject || 'ทั่วไป'} · กำหนดส่ง ${a.due_date || '-'}`,
+            due: a.due_date,
+            tone: a.due_date && new Date(a.due_date) < new Date() ? 'bad' : 'warn',
+            icon: 'journal-check',
+            link: '#/assigns'
+          }));
+        } catch (e) {}
 
-        // ประมวลผล Timeline / AuditLogs
-        const studentMap = {};
-        (allStudentsLogRes.data || []).forEach(s => { studentMap[s.id] = `${s.prefix || ''}${s.first_name || ''} ${s.last_name || ''}`.trim(); });
-        const classMap = {};
-        (clsLogsRes.data || []).forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
-        const behMap = {};
-        (behLogsRes.data || []).forEach(b => { behMap[b.id] = { title: b.title || b.type, student_id: b.student_id }; });
-        const visitMap = {};
-        (visitLogsRes.data || []).forEach(v => { visitMap[v.id] = v.student_id; });
-        const contactMap = {};
-        (contactLogsRes.data || []).forEach(c => { contactMap[c.id] = { subject: c.subject, student_id: c.student_id }; });
-        const caseMap = {};
-        (caseLogsRes.data || []).forEach(c => { caseMap[c.id] = { problem: c.problem, student_id: c.student_id }; });
-
-        const timelineList = (logsRes.data || []).map(l => {
-          let title = l.action || 'กิจกรรมในระบบ';
-          let sub = `${l.entity || ''} (${l.entity_id || ''})`;
-          let icon = 'activity';
-          let tone = 'ok';
-
-          if (title.includes('attendance.save') || title.includes('attendance')) {
-            title = 'เช็กชื่อประจำวัน';
-            const className = classMap[l.entity_id] || l.entity_id || '';
-            sub = `บันทึกการมาเรียน · ห้อง ${className}`;
-            icon = 'ui-checks';
-            tone = 'ok';
-          } else if (title.includes('behavior')) {
-            title = 'บันทึกพฤติกรรมนักเรียน';
-            const beh = behMap[l.entity_id];
-            const studentName = beh && studentMap[beh.student_id] ? studentMap[beh.student_id] : '';
-            sub = studentName ? `${studentName} · ${beh.title}` : `คะแนนพฤติกรรม · ${l.entity_id || ''}`;
-            icon = 'emoji-smile-fill';
-            tone = 'warn';
-          } else if (title.includes('contact')) {
-            title = 'ติดต่อผู้ปกครอง';
-            const con = contactMap[l.entity_id];
-            const studentName = con && studentMap[con.student_id] ? studentMap[con.student_id] : '';
-            sub = studentName ? `${studentName} · ${con.subject}` : `บันทึกการสื่อสาร · ${l.entity_id || ''}`;
-            icon = 'telephone-fill';
-            tone = 'acc';
-          } else if (title.includes('visit')) {
-            title = 'เยี่ยมบ้านนักเรียน';
-            const sId = visitMap[l.entity_id];
-            const studentName = sId && studentMap[sId] ? studentMap[sId] : '';
-            sub = studentName ? `เยี่ยมบ้านนักเรียน: ${studentName}` : `บันทึกเยี่ยมบ้าน · ${l.entity_id || ''}`;
-            icon = 'house-heart-fill';
-            tone = 'ok';
-          } else if (title.includes('case')) {
-            title = 'เคสติดตามช่วยเหลือนักเรียน';
-            const cas = caseMap[l.entity_id];
-            const studentName = cas && studentMap[cas.student_id] ? studentMap[cas.student_id] : '';
-            sub = studentName ? `${studentName} · ${cas.problem || 'ดูแลช่วยเหลือ'}` : `ระบบดูแลช่วยเหลือ · ${l.entity_id || ''}`;
-            icon = 'life-preserver';
-            tone = 'bad';
-          } else if (title.includes('auth.login')) {
-            title = 'เข้าสู่ระบบ';
-            sub = `ผู้ใช้งาน: ${l.username || 'ระบบ'}`;
-            icon = 'box-arrow-in-right';
-            tone = 'brand';
-          } else if (title.includes('year.active')) {
-            title = 'เปลี่ยนปีการศึกษาปัจจุบัน';
-            sub = `กำหนดปีการศึกษา · ${l.entity_id || ''}`;
-            icon = 'calendar2-range-fill';
-            tone = 'brand';
-          } else if (title.includes('student.')) {
-            title = 'จัดการข้อมูลนักเรียน';
-            const studentName = studentMap[l.entity_id] || '';
-            sub = studentName ? `นักเรียน: ${studentName}` : `ทะเบียนนักเรียน · ${l.entity_id || ''}`;
-            icon = 'people-fill';
-            tone = 'ok';
-          }
-
-          let dateStr = todayStr;
-          let timeStr = '';
-          if (l.at) {
-            const dObj = new Date(l.at);
-            dateStr = dObj.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
-            timeStr = dObj.toLocaleTimeString('en-GB', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' });
-          }
-
-          return { title, sub, date: dateStr, time: timeStr, by: l.username || 'ระบบ', tone, icon };
-        });
-
-        const upcomingList = (eventsRes.data || []).map(ev => ({
-          id: ev.id, name: ev.title, date: ev.date, time_start: ev.time_start || '', place: ev.place || ''
-        }));
-
-        const trendData = [];
-        const weeklyData = [];
-        const allAtt = allAttRes.data || [];
-        for (let i = 6; i >= 0; i--) {
-          const d = new Date();
-          d.setDate(d.getDate() - i);
-          const dStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
-          const dayRecords = allAtt.filter(r => String(r.date || '').slice(0, 10) === dStr);
-          const pNum = dayRecords.filter(r => r.status === 'มา').length;
-          const totalRec = dayRecords.length || (totalStudents || 1);
-          const rateVal = Math.round((pNum / totalRec) * 100);
+        let timelineList = [];
+        try {
+          // 🚀 ปรับแต่ง: จำกัดคอลัมน์ AuditLogs
+          const { data: logs } = await supabase.from('AuditLogs')
+            .select('action, entity, entity_id, username, at')
+            .order('at', { ascending: false }).limit(8);
           
-          trendData.push({ date: dStr, rate: rateVal });
-          weeklyData.push({ label: dStr, present: pNum, total: totalRec });
-        }
+          const { data: studentsData } = await supabase.from('Students').select('id, prefix, first_name, last_name');
+          const { data: behData } = await supabase.from('Behaviors').select('id, student_id, title, type');
+          const { data: visitData } = await supabase.from('HomeVisits').select('id, student_id');
+          const { data: contactData } = await supabase.from('ParentContacts').select('id, student_id, subject');
+          const { data: caseData } = await supabase.from('StudentCases').select('id, student_id, problem');
+          const { data: clsData } = await supabase.from('Classrooms').select('id, level, room, name');
 
-        const behaviorMap = {};
-        const behData = behRes.data || [];
-        const behaviorTotal = behData.length;
-        behData.forEach(b => {
-          const tp = b.type || 'ทั่วไป';
-          behaviorMap[tp] = (behaviorMap[tp] || 0) + 1;
-        });
+          const studentMap = {};
+          (studentsData || []).forEach(s => { studentMap[s.id] = `${s.prefix || ''}${s.first_name || ''} ${s.last_name || ''}`.trim(); });
+          const classMap = {};
+          (clsData || []).forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
+          const behMap = {};
+          (behData || []).forEach(b => { behMap[b.id] = { title: b.title || b.type, student_id: b.student_id }; });
+          const visitMap = {};
+          (visitData || []).forEach(v => { visitMap[v.id] = v.student_id; });
+          const contactMap = {};
+          (contactData || []).forEach(c => { contactMap[c.id] = { subject: c.subject, student_id: c.student_id }; });
+          const caseMap = {};
+          (caseData || []).forEach(c => { caseMap[c.id] = { problem: c.problem, student_id: c.student_id }; });
+
+          timelineList = (logs || []).map(l => {
+            let title = l.action || 'กิจกรรมในระบบ';
+            let sub = `${l.entity || ''} (${l.entity_id || ''})`;
+            let icon = 'activity';
+            let tone = 'ok';
+
+            if (title.includes('attendance.save') || title.includes('attendance')) {
+              title = 'เช็กชื่อประจำวัน';
+              const className = classMap[l.entity_id] || l.entity_id || '';
+              sub = `บันทึกการมาเรียน · ห้อง ${className}`;
+              icon = 'ui-checks';
+              tone = 'ok';
+            } else if (title.includes('behavior')) {
+              title = 'บันทึกพฤติกรรมนักเรียน';
+              const beh = behMap[l.entity_id];
+              const studentName = beh && studentMap[beh.student_id] ? studentMap[beh.student_id] : '';
+              sub = studentName ? `${studentName} · ${beh.title}` : `คะแนนพฤติกรรม · ${l.entity_id || ''}`;
+              icon = 'emoji-smile-fill';
+              tone = 'warn';
+            } else if (title.includes('contact')) {
+              title = 'ติดต่อผู้ปกครอง';
+              const con = contactMap[l.entity_id];
+              const studentName = con && studentMap[con.student_id] ? studentMap[con.student_id] : '';
+              sub = studentName ? `${studentName} · ${con.subject}` : `บันทึกการสื่อสาร · ${l.entity_id || ''}`;
+              icon = 'telephone-fill';
+              tone = 'acc';
+            } else if (title.includes('visit')) {
+              title = 'เยี่ยมบ้านนักเรียน';
+              const sId = visitMap[l.entity_id];
+              const studentName = sId && studentMap[sId] ? studentMap[sId] : '';
+              sub = studentName ? `เยี่ยมบ้านนักเรียน: ${studentName}` : `บันทึกเยี่ยมบ้าน · ${l.entity_id || ''}`;
+              icon = 'house-heart-fill';
+              tone = 'ok';
+            } else if (title.includes('case')) {
+              title = 'เคสติดตามช่วยเหลือนักเรียน';
+              const cas = caseMap[l.entity_id];
+              const studentName = cas && studentMap[cas.student_id] ? studentMap[cas.student_id] : '';
+              sub = studentName ? `${studentName} · ${cas.problem || 'ดูแลช่วยเหลือ'}` : `ระบบดูแลช่วยเหลือ · ${l.entity_id || ''}`;
+              icon = 'life-preserver';
+              tone = 'bad';
+            } else if (title.includes('auth.login')) {
+              title = 'เข้าสู่ระบบ';
+              sub = `ผู้ใช้งาน: ${l.username || 'ระบบ'}`;
+              icon = 'box-arrow-in-right';
+              tone = 'brand';
+            } else if (title.includes('year.active')) {
+              title = 'เปลี่ยนปีการศึกษาปัจจุบัน';
+              sub = `กำหนดปีการศึกษา · ${l.entity_id || ''}`;
+              icon = 'calendar2-range-fill';
+              tone = 'brand';
+            } else if (title.includes('year.')) {
+              title = 'จัดการปีการศึกษา';
+              sub = `ปีการศึกษา · ${l.entity_id || ''}`;
+              icon = 'calendar2-check-fill';
+              tone = 'ok';
+            } else if (title.includes('student.')) {
+              title = 'จัดการข้อมูลนักเรียน';
+              const studentName = studentMap[l.entity_id] || '';
+              sub = studentName ? `นักเรียน: ${studentName}` : `ทะเบียนนักเรียน · ${l.entity_id || ''}`;
+              icon = 'people-fill';
+              tone = 'ok';
+            } else if (title.includes('setting.')) {
+              title = 'ตั้งค่าระบบโรงเรียน';
+              sub = `ตั้งค่าระบบ · ${l.entity_id || ''}`;
+              icon = 'gear-fill';
+              tone = 'info';
+            } else if (title.includes('delete')) {
+              title = 'ลบข้อมูลในระบบ';
+              sub = `ลบรายการ · ${l.entity_id || ''}`;
+              tone = 'bad';
+              icon = 'trash-fill';
+            }
+
+            let dateStr = todayStr;
+            let timeStr = '';
+            if (l.at) {
+              const dObj = new Date(l.at);
+              dateStr = dObj.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+              timeStr = dObj.toLocaleTimeString('en-GB', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' });
+            }
+
+            return {
+              title: title, sub: sub, date: dateStr, time: timeStr, by: l.username || 'ระบบ', tone: tone, icon: icon
+            };
+          });
+        } catch (e) {}
+
+        let upcomingList = [];
+        try {
+          const { data: events } = await supabase.from('CalendarEvents')
+            .select('id, title, date, time_start, place')
+            .gte('date', todayStr).order('date', { ascending: true }).limit(5);
+          upcomingList = (events || []).map(ev => ({
+            id: ev.id, name: ev.title, date: ev.date, time_start: ev.time_start || '', place: ev.place || ''
+          }));
+        } catch (e) {}
+
+        let trendData = [];
+        let weeklyData = [];
+        try {
+          const { data: allAtt } = await supabase.from('Attendance').select('date, status');
+          for (let i = 6; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            const dStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+            const dayRecords = (allAtt || []).filter(r => String(r.date || '').slice(0, 10) === dStr);
+            const pNum = dayRecords.filter(r => r.status === 'มา').length;
+            const totalRec = dayRecords.length || (totalStudents || 1);
+            const rateVal = Math.round((pNum / totalRec) * 100);
+            
+            trendData.push({ date: dStr, rate: rateVal });
+            weeklyData.push({ label: dStr, present: pNum, total: totalRec });
+          }
+        } catch (e) {}
+
+        let behaviorMap = {};
+        let behaviorTotal = 0;
+        try {
+          const { data: behData } = await supabase.from('Behaviors').select('type, point');
+          behaviorTotal = (behData || []).length;
+          (behData || []).forEach(b => {
+            const tp = b.type || 'ทั่วไป';
+            behaviorMap[tp] = (behaviorMap[tp] || 0) + 1;
+          });
+        } catch (e) {}
 
         const behaviorList = Object.keys(behaviorMap).length > 0 
           ? Object.keys(behaviorMap).map(k => ({ label: k, value: behaviorMap[k], tone: getBehaviorTone(k) }))
           : [{ label: 'ยังไม่มีข้อมูล', value: 1, tone: 'mut' }];
 
-        const activeYear = activeYearRes.data;
+        let activeYear = null;
+        try {
+          const { data } = await supabase.from('AcademicYears').select('label').eq('is_active', true).maybeSingle();
+          activeYear = data;
+        } catch (e) {}
 
-        const resultPayload = {
+        return res.json({
           ok: true,
           data: studentsList,
           items: studentsList,
@@ -3829,13 +3831,7 @@ case 'activity.attend': {
           watch_list: watchStudents, 
           upcoming: upcomingList,
           can: { attendance: true, student: true, daily: true, report: true, behavior: true, contact: true, visit: true }
-        };
-
-        // 📌 บันทึกลงแคชแดชบอร์ด
-        global.dashboardCache = resultPayload;
-        global.dashboardCacheTime = Date.now();
-
-        return res.json(resultPayload);
+        });
       }
 
       case 'exec.dashboard': {
@@ -3846,112 +3842,101 @@ case 'activity.attend': {
         }
 
         const todayStr = getTodayThai();
+        let totalStudents = 0, maleCount = 0, femaleCount = 0, totalClasses = 0, totalTeachers = 0;
+        
+        try {
+          const { data: studentsData } = await supabase.from('Students').select('gender, class_id').eq('status', 'กำลังศึกษา');
+          totalStudents = (studentsData || []).length;
+          maleCount = (studentsData || []).filter(s => s.gender === 'ชาย').length;
+          femaleCount = (studentsData || []).filter(s => s.gender === 'หญิง').length;
+        } catch (e) {}
 
-        // 🚀 ดึงข้อมูลทุกตารางพร้อมกันด้วย Promise.all เพื่อความเร็วสูงสุด
-        const [
-          studentsRes,
-          classroomsCountRes,
-          usersCountRes,
-          usersDataRes,
-          classesDataRes,
-          allStudentsRes,
-          attDataRes,
-          logDataRes,
-          visitDataRes,
-          contactDataRes,
-          behDataRes,
-          allAttRes
-        ] = await Promise.all([
-          supabase.from('Students').select('gender, class_id').eq('status', 'กำลังศึกษา'),
-          supabase.from('Classrooms').select('*', { count: 'exact', head: true }),
-          supabase.from('Users').select('*', { count: 'exact', head: true }),
-          supabase.from('Users').select('id, full_name'),
-          supabase.from('Classrooms').select('*'),
-          supabase.from('Students').select('id, class_id, level'),
-          supabase.from('Attendance').select('class_id, date, status'),
-          supabase.from('DailyLogs').select('class_id'),
-          supabase.from('HomeVisits').select('student_id'),
-          supabase.from('ParentContacts').select('student_id'),
-          supabase.from('Behaviors').select('type, point'),
-          supabase.from('Attendance').select('date, status')
-        ]);
+        try {
+          const { count } = await supabase.from('Classrooms').select('*', { count: 'exact', head: true });
+          totalClasses = count || 0;
+        } catch (e) {}
 
-        const studentsData = studentsRes.data || [];
-        const totalStudents = studentsData.length;
-        const maleCount = studentsData.filter(s => s.gender === 'ชาย').length;
-        const femaleCount = studentsData.filter(s => s.gender === 'หญิง').length;
+        try {
+          const { count } = await supabase.from('Users').select('*', { count: 'exact', head: true });
+          totalTeachers = count || 0;
+        } catch (e) {}
 
-        const totalClasses = classroomsCountRes.count || 0;
-        const totalTeachers = usersCountRes.count || 0;
-
-        const userMap = {};
-        (usersDataRes.data || []).forEach(u => { userMap[u.id] = u.full_name; });
+        let userMap = {};
+        try {
+          const { data: usersData } = await supabase.from('Users').select('id, full_name');
+          (usersData || []).forEach(u => { userMap[u.id] = u.full_name; });
+        } catch (e) {}
 
         let classProgress = [];
         let levelDistMap = {};
+        try {
+          const { data: classesData } = await supabase.from('Classrooms').select('*');
+          const { data: allStudents } = await supabase.from('Students').select('class_id, level');
+          const { data: attData } = await supabase.from('Attendance').select('class_id, date, status');
+          const { data: logData } = await supabase.from('DailyLogs').select('class_id');
+          const { data: visitData } = await supabase.from('HomeVisits');
+          const { data: contactData } = await supabase.from('ParentContacts');
 
-        const classesData = classesDataRes.data || [];
-        const allStudents = allStudentsRes.data || [];
-        const attData = attDataRes.data || [];
-        const logData = logDataRes.data || [];
-        const visitData = visitDataRes.data || [];
-        const contactData = contactDataRes.data || [];
+          (allStudents || []).forEach(s => {
+            const lvl = s.level || 'ไม่ระบุ';
+            levelDistMap[lvl] = (levelDistMap[lvl] || 0) + 1;
+          });
 
-        (allStudents || []).forEach(s => {
-          const lvl = s.level || 'ไม่ระบุ';
-          levelDistMap[lvl] = (levelDistMap[lvl] || 0) + 1;
-        });
+          classProgress = (classesData || []).map(c => {
+            const clsStudents = (allStudents || []).filter(s => String(s.class_id) === String(c.id));
+            const studentCount = clsStudents.length;
+            const checkedToday = (attData || []).some(a => String(a.class_id) === String(c.id) && String(a.date).slice(0, 10) === todayStr);
+            const logsCount = (logData || []).filter(l => String(l.class_id) === String(c.id)).length;
+            
+            const clsStudentIds = clsStudents.map(s => String(s.id));
+            const clsVisits = (visitData || []).filter(v => clsStudentIds.includes(String(v.student_id))).length;
+            const clsContacts = (contactData || []).filter(ct => clsStudentIds.includes(String(ct.student_id))).length;
 
-        classProgress = classesData.map(c => {
-          const clsStudents = allStudents.filter(s => String(s.class_id) === String(c.id));
-          const studentCount = clsStudents.length;
-          const checkedToday = attData.some(a => String(a.class_id) === String(c.id) && String(a.date).slice(0, 10) === todayStr);
-          const logsCount = logData.filter(l => String(l.class_id) === String(c.id)).length;
-          
-          const clsStudentIds = clsStudents.map(s => String(s.id));
-          const clsVisits = visitData.filter(v => clsStudentIds.includes(String(v.student_id))).length;
-          const clsContacts = contactData.filter(ct => clsStudentIds.includes(String(ct.student_id))).length;
+            let score = 0;
+            if (checkedToday) score += 40;
+            if (logsCount > 0) score += 20;
+            if (clsVisits > 0) score += 20;
+            if (clsContacts > 0) score += 20;
 
-          let score = 0;
-          if (checkedToday) score += 40;
-          if (logsCount > 0) score += 20;
-          if (clsVisits > 0) score += 20;
-          if (clsContacts > 0) score += 20;
+            return {
+              class_id: c.id,
+              level: c.level || '',
+              room: c.room || '',
+              name: c.name || `${c.level}/${c.room}`,
+              homeroom: userMap[c.homeroom_id] || 'ยังไม่กำหนด',
+              students: studentCount,
+              checked_today: checkedToday,
+              logs: logsCount,
+              visits: clsVisits,
+              contacts: clsContacts,
+              score: Math.min(100, score)
+            };
+          });
 
-          return {
-            class_id: c.id,
-            level: c.level || '',
-            room: c.room || '',
-            name: c.name || `${c.level}/${c.room}`,
-            homeroom: userMap[c.homeroom_id] || 'ยังไม่กำหนด',
-            students: studentCount,
-            checked_today: checkedToday,
-            logs: logsCount,
-            visits: clsVisits,
-            contacts: clsContacts,
-            score: Math.min(100, score)
-          };
-        });
+          const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
+          classProgress.sort((a, b) => {
+            const lA = levelOrder[String(a.level || '').trim()] || 99;
+            const lB = levelOrder[String(b.level || '').trim()] || 99;
+            if (lA !== lB) return lA - lB;
+            return String(a.room || '').localeCompare(String(b.room || ''), 'th');
+          });
 
-        const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
-        classProgress.sort((a, b) => {
-          const lA = levelOrder[String(a.level || '').trim()] || 99;
-          const lB = levelOrder[String(b.level || '').trim()] || 99;
-          if (lA !== lB) return lA - lB;
-          return String(a.room || '').localeCompare(String(b.room || ''), 'th');
-        });
+        } catch (e) {}
 
         const levelDistArray = Object.keys(levelDistMap).length > 0
           ? Object.keys(levelDistMap).map(k => ({ label: k, value: levelDistMap[k], tone: 'info' }))
           : [{ label: 'ทั้งหมด', value: totalStudents, tone: 'ok' }];
 
         let behaviorMap = {};
-        const behData = behDataRes.data || [];
-        const behaviorTotal = behData.length;
-        behData.forEach(b => {
-          const tp = b.type || 'พฤติกรรมทั่วไป';
-          behaviorMap[tp] = (behaviorMap[tp] || 0) + 1;
-        });
+        let behaviorTotal = 0;
+        try {
+          const { data: behData } = await supabase.from('Behaviors').select('type, point');
+          behaviorTotal = (behData || []).length;
+          (behData || []).forEach(b => {
+            const tp = b.type || 'พฤติกรรมทั่วไป';
+            behaviorMap[tp] = (behaviorMap[tp] || 0) + 1;
+          });
+        } catch (e) {}
 
         let behaviorList = Object.keys(behaviorMap).length > 0 
           ? Object.keys(behaviorMap).map(k => ({ 
@@ -3965,19 +3950,23 @@ case 'activity.attend': {
               { label: 'ทำผิดระเบียบ', value: 2, tone: 'bad' }
             ];
 
-        const calculatedBehaviorTotal = behaviorTotal > 0 ? behaviorTotal : behaviorList.reduce((acc, curr) => acc + curr.value, 0);
-
-        const trendData = [];
-        const allAtt = allAttRes.data || [];
-        for (let i = 6; i >= 0; i--) {
-          const d = new Date();
-          d.setDate(d.getDate() - i);
-          const dStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
-          const dayRecords = allAtt.filter(r => String(r.date || '').slice(0, 10) === dStr);
-          const pNum = dayRecords.filter(r => r.status === 'มา').length;
-          const totalRec = dayRecords.length || (totalStudents || 1);
-          trendData.push({ date: dStr, rate: Math.round((pNum / totalRec) * 100) });
+        if (behaviorTotal === 0) {
+          behaviorTotal = behaviorList.reduce((acc, curr) => acc + curr.value, 0);
         }
+
+        let trendData = [];
+        try {
+          const { data: allAtt } = await supabase.from('Attendance').select('date, status');
+          for (let i = 6; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            const dStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' });
+            const dayRecords = (allAtt || []).filter(r => String(r.date || '').slice(0, 10) === dStr);
+            const pNum = dayRecords.filter(r => r.status === 'มา').length;
+            const totalRec = dayRecords.length || (totalStudents || 1);
+            trendData.push({ date: dStr, rate: Math.round((pNum / totalRec) * 100) });
+          }
+        } catch (e) {}
 
         // 📌 สร้างก้อนข้อมูลสำหรับส่งกลับ
         const resultPayload = { 
@@ -3999,7 +3988,7 @@ case 'activity.attend': {
           class_progress: classProgress,
           level_dist: levelDistArray,
           behavior: behaviorList,
-          behavior_total: calculatedBehaviorTotal
+          behavior_total: behaviorTotal
         };
 
         // 📌 บันทึกลงตัวแปรแคชไว้ใช้รอบถัดไป
@@ -4007,7 +3996,7 @@ case 'activity.attend': {
         execCacheTime = Date.now();
 
         return res.json(resultPayload);
-      }
+       }
 
       case 'audit.list': {
         const { data, error } = await supabase.from('AuditLogs').select('*').order('at', { ascending: false });
