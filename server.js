@@ -14,6 +14,8 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 let execCache = null;
 let execCacheTime = 0;
+let visitCache = null;
+let visitCacheTime = 0;
 
 // ฟังก์ชันตรวจสอบ Token แบบยืดหยุ่น ป้องกันการหลุดหน้าจอ
 async function verifyToken(token) {
@@ -1347,6 +1349,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           result = data ? data[0] : dataIn;
         }
 	execCache = null;
+	visitCache = null;
         return res.json({ ok: true, item: result });
       }
 
@@ -2706,6 +2709,12 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
       }
 
       case 'visit.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (visitCache && (nowTime - visitCacheTime < 120000)) {
+          return res.json(visitCache);
+        }
+
         const keyword = String(payload?.q || '').trim().toLowerCase();
         const filterClassId = String(payload?.class_id || '').trim();
         const filterStatus = String(payload?.status || '').trim();
@@ -2764,7 +2773,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           items = items.filter(x => x.student.name.toLowerCase().includes(keyword));
         }
 
-        return res.json({ 
+        const resultPayload = { 
           ok: true, 
           items, 
           total: items.length, 
@@ -2782,7 +2791,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           statuses: ['ยังไม่ได้เยี่ยม', 'นัดหมายแล้ว', 'เยี่ยมแล้ว', 'ต้องติดตาม', 'ปิดการติดตาม'], 
           classes: (classes || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })), 
           can: { manage: true } 
-        });
+        };
+
+        // 📌 บันทึกลงแคชเพื่อใช้ตอบกลับอย่างรวดเร็วในรอบถัดไป
+        visitCache = resultPayload;
+        visitCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
 
       case 'health.index':
