@@ -145,6 +145,14 @@ app.get('/', async (req, res) => {
   }
 });
 
+app.get('/manifest.json', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'manifest.json'));
+});
+
+app.get('/logo.ico', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'logo.ico'));
+});
+
 const ALL_ADMIN_CAPS = [
   'dashboard.view', 'search.global',
   'student.view_all', 'student.view_own', 'student.view_self', 'student.manage', 'student.import', 'student.export', 'student.sensitive',
