@@ -4153,11 +4153,13 @@ case 'activity.attend': {
         });
       }
 
-      case 'notify.tasks': {
+      case 'notify.tasks':
+      case 'notifications':
+      case 'notify': {
         let tasksList = [];
         const now = new Date();
 
-        // 🚀 ดึงข้อมูลจากทั้ง 3 ตารางพร้อมกันด้วย Promise.all เพื่อความเร็วสูงสุด
+        // 🚀 ดึงข้อมูลจากทั้ง 3 ตารางพร้อมกันด้วย Promise.all
         const [
           assignsRes,
           casesRes,
@@ -4222,7 +4224,8 @@ case 'activity.attend': {
 
         return res.json({
           ok: true,
-          items: tasksList
+          items: tasksList,
+          data: tasksList
         });
       }
 
