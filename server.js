@@ -4040,13 +4040,21 @@ case 'activity.attend': {
       }
 
       case 'audit.list': {
-        const { data, error } = await supabase.from('AuditLogs').select('*').order('at', { ascending: false });
+        // 🚀 เลือกดึงเฉพาะฟิลด์ที่จำเป็น และจำกัดจำนวน 200 รายการล่าสุด เพื่อป้องกันหน่วยความจำบวมเมื่อเก็บบันทึกนานวัน
+        const { data, error } = await supabase
+          .from('AuditLogs')
+          .select('id, at, date, time, username, action, entity, entity_id, detail')
+          .order('at', { ascending: false })
+          .limit(200);
+
         if (error) {
           console.error('❌ AuditList Error:', error.message);
         }
         
-        // แปลงฟิลด์ให้ตรงกับที่หน้าเว็บ (ScriptsPages4.html) ต้องการ
-        const items = (data || []).map(r => {
+        const logsData = data || [];
+
+        // แปลงฟิลด์ให้ตรงกับที่หน้าเว็บต้องการ
+        const items = logsData.map(r => {
           let dateStr = '';
           let timeStr = '';
           if (r.at) {
@@ -4058,6 +4066,11 @@ case 'activity.attend': {
             timeStr = r.time || '00:00';
           }
 
+          const act = String(r.action || '').toLowerCase();
+          let tone = 'brand';
+          if (act.includes('delete') || act.includes('remove')) tone = 'bad';
+          else if (act.includes('save') || act.includes('create') || act.includes('insert')) tone = 'ok';
+
           return {
             id: r.id,
             date: dateStr,
@@ -4067,9 +4080,11 @@ case 'activity.attend': {
             entity: r.entity || 'System',
             entity_id: r.entity_id || '',
             detail: r.detail || '',
-            tone: r.action && r.action.includes('delete') ? 'bad' : (r.action && r.action.includes('save') ? 'ok' : 'brand')
+            tone: tone
           };
         });
+
+        const todayThai = getTodayThai();
 
         return res.json({ 
           ok: true, 
@@ -4079,7 +4094,7 @@ case 'activity.attend': {
           page: 1, 
           kpi: { 
             total: items.length, 
-            today: items.filter(x => x.date === getTodayThai()).length, 
+            today: items.filter(x => x.date === todayThai).length, 
             login: items.filter(x => x.action === 'auth.login').length, 
             mutation: items.filter(x => x.action && (x.action.includes('save') || x.action.includes('update'))).length 
           }, 
@@ -4092,63 +4107,65 @@ case 'activity.attend': {
         let tasksList = [];
         const now = new Date();
 
-        // 1. ดึงข้อมูลจากตาราง Assignments (ใช้คำสั่งชุดเดียวกับแดชบอร์ด)
-        try {
-          const { data: assigns } = await supabase.from('Assignments').select('*').order('due_date', { ascending: true });
-          if (assigns && assigns.length > 0) {
-            assigns.forEach(a => {
-              const dueDate = a.due_date ? new Date(a.due_date) : null;
-              const isOverdue = dueDate && dueDate < now;
-              tasksList.push({
-                id: a.id,
-                title: a.title,
-                sub: `${a.subject || 'ทั่วไป'} · กำหนดส่ง ${a.due_date || '-'}`,
-                due: a.due_date,
-                tone: isOverdue ? 'bad' : 'warn',
-                icon: 'journal-check',
-                link: '#/assigns'
-              });
-            });
-          }
-        } catch (e) {}
+        // 🚀 ดึงข้อมูลจากทั้ง 3 ตารางพร้อมกันด้วย Promise.all เพื่อความเร็วสูงสุด
+        const [
+          assignsRes,
+          casesRes,
+          eventsRes
+        ] = await Promise.all([
+          supabase.from('Assignments').select('id, title, subject, due_date').order('due_date', { ascending: true }),
+          supabase.from('StudentCases').select('id, case_no, problem, next_date, opened_at, status').neq('status', 'ปิดเคส'),
+          supabase.from('CalendarEvents').select('id, title, type, time_start, date, status').neq('status', 'เสร็จแล้ว')
+        ]);
 
-        // 2. ดึงข้อมูลเคสที่ต้องติดตามจาก StudentCases
-        try {
-          const { data: cases } = await supabase.from('StudentCases').select('*').neq('status', 'ปิดเคส');
-          if (cases && cases.length > 0) {
-            cases.forEach(c => {
-              const isOverdue = c.next_date && new Date(c.next_date) < now;
-              tasksList.push({
-                id: c.id,
-                title: `ติดตามนักเรียน · เคส ${c.case_no || c.id}`,
-                sub: c.problem ? c.problem.slice(0, 60) + '...' : 'อยู่ระหว่างการช่วยเหลือ',
-                due: c.next_date || c.opened_at,
-                tone: isOverdue ? 'bad' : 'warn',
-                icon: 'life-preserver',
-                link: '#/cases'
-              });
-            });
-          }
-        } catch (e) {}
+        // 1. ประมวลผลการบ้านจาก Assignments
+        const assigns = assignsRes.data || [];
+        assigns.forEach(a => {
+          const dueDate = a.due_date ? new Date(a.due_date) : null;
+          const isOverdue = dueDate && dueDate < now;
+          tasksList.push({
+            id: a.id,
+            title: a.title,
+            sub: `${a.subject || 'ทั่วไป'} · กำหนดส่ง ${a.due_date || '-'}`,
+            due: a.due_date,
+            tone: isOverdue ? 'bad' : 'warn',
+            icon: 'journal-check',
+            link: '#/assigns'
+          });
+        });
 
-        // 3. ดึงข้อมูลจากตาราง CalendarEvents (กิจกรรมในปฏิทิน)
-        try {
-          const { data: events } = await supabase.from('CalendarEvents').select('*').neq('status', 'เสร็จแล้ว');
-          if (events && events.length > 0) {
-            events.forEach(ev => {
-              const isOverdue = ev.date && new Date(ev.date) < now;
-              tasksList.push({
-                id: ev.id,
-                title: ev.title,
-                sub: `${ev.type || 'งานอื่น'} · ${ev.time_start || '15:30'}`,
-                due: ev.date,
-                tone: isOverdue ? 'bad' : 'warn',
-                icon: 'calendar-event',
-                link: '#/calendar'
-              });
-            });
-          }
-        } catch (e) {}
+        // 2. ประมวลผลเคสติดตามจาก StudentCases
+        const cases = casesRes.data || [];
+        cases.forEach(c => {
+          const targetDate = c.next_date || c.opened_at;
+          const dueDate = targetDate ? new Date(targetDate) : null;
+          const isOverdue = dueDate && dueDate < now;
+          tasksList.push({
+            id: c.id,
+            title: `ติดตามนักเรียน · เคส ${c.case_no || c.id}`,
+            sub: c.problem ? String(c.problem).slice(0, 60) + '...' : 'อยู่ระหว่างการช่วยเหลือ',
+            due: targetDate,
+            tone: isOverdue ? 'bad' : 'warn',
+            icon: 'life-preserver',
+            link: '#/cases'
+          });
+        });
+
+        // 3. ประมวลผลกิจกรรมจาก CalendarEvents
+        const events = eventsRes.data || [];
+        events.forEach(ev => {
+          const dueDate = ev.date ? new Date(ev.date) : null;
+          const isOverdue = dueDate && dueDate < now;
+          tasksList.push({
+            id: ev.id,
+            title: ev.title,
+            sub: `${ev.type || 'งานอื่น'} · ${ev.time_start || '15:30'}`,
+            due: ev.date,
+            tone: isOverdue ? 'bad' : 'warn',
+            icon: 'calendar-event',
+            link: '#/calendar'
+          });
+        });
 
         // จัดเรียงตามวันครบกำหนด
         tasksList.sort((a, b) => new Date(a.due || '2099-01-01') - new Date(b.due || '2099-01-01'));
@@ -4160,12 +4177,24 @@ case 'activity.attend': {
       }
 
       case 'system.status': {
-        const { count: studentCount } = await supabase.from('Students').select('*', { count: 'exact', head: true });
-        const { count: userCount } = await supabase.from('Users').select('*', { count: 'exact', head: true });
-        const { count: classCount } = await supabase.from('Classrooms').select('*', { count: 'exact', head: true });
+        // 🚀 ดึงจำนวนนับจากทั้ง 3 ตารางพร้อมกันด้วย Promise.all เพื่อความเร็วสูงสุด
+        const [
+          studentRes,
+          userRes,
+          classRes
+        ] = await Promise.all([
+          supabase.from('Students').select('*', { count: 'exact', head: true }),
+          supabase.from('Users').select('*', { count: 'exact', head: true }),
+          supabase.from('Classrooms').select('*', { count: 'exact', head: true })
+        ]);
+
         return res.json({
           ok: true,
-          counts: { Students: studentCount || 0, Users: userCount || 0, Classrooms: classCount || 0 },
+          counts: { 
+            Students: studentRes.count || 0, 
+            Users: userRes.count || 0, 
+            Classrooms: classRes.count || 0 
+          },
           pbkdf2_iter: 10000,
           last_backup_at: null,
           sheet: { url: '#' }
@@ -4252,7 +4281,23 @@ case 'activity.attend': {
       }
 
       case 'system.cache': {
-        return res.json({ ok: true, message: 'ล้างแคชเรียบร้อย' });
+        // 🚀 เคลียร์ตัวแปรแคชในหน่วยความจำทุกโมดูลให้เป็นค่าว่าง เพื่อดึงข้อมูลสดจาก Supabase ทันที
+        studentCache = null;
+        studentCacheTime = 0;
+        visitCache = null;
+        visitCacheTime = 0;
+        caseCache = null;
+        caseCacheTime = 0;
+        docCache = null;
+        docCacheTime = 0;
+        dailyCache = null;
+        dailyCacheTime = 0;
+        execCache = null;
+        execCacheTime = 0;
+        global.dashboardCache = null;
+        global.dashboardCacheTime = 0;
+
+        return res.json({ ok: true, message: 'ล้างแคชหน่วยความจำเรียบร้อยแล้ว' });
       }
 
 /* ── GET SINGLE RECORD ACTIONS ── */
