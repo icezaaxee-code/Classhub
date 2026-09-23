@@ -16,6 +16,8 @@ let execCache = null;
 let execCacheTime = 0;
 let visitCache = null;
 let visitCacheTime = 0;
+let caseCache = null;
+let caseCacheTime = 0;
 
 // ฟังก์ชันตรวจสอบ Token แบบยืดหยุ่น ป้องกันการหลุดหน้าจอ
 async function verifyToken(token) {
@@ -1405,6 +1407,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
+	caseCache = null;
         return res.json({ ok: true, item: result });
       }
       case 'case.followup': {
@@ -1444,6 +1447,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
       }
       case 'case.delete': {
         await supabase.from('StudentCases').delete().eq('id', payload?.id);
+	caseCache = null;
         return res.json({ ok: true });
       }
 
@@ -3080,7 +3084,17 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
         });
       }
 
+      // 📌 ประกาศตัวแปรแคชสำหรับหน้ารายการเคสช่วยเหลือนักเรียน
+      let caseCache = null;
+      let caseCacheTime = 0;
+
       case 'case.list': {
+        // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
+        const nowTime = Date.now();
+        if (caseCache && (nowTime - caseCacheTime < 120000)) {
+          return res.json(caseCache);
+        }
+
         const keyword = String(payload?.q || '').trim().toLowerCase();
         const filterClassId = String(payload?.class_id || '').trim();
         const filterStatus = String(payload?.status || '').trim();
@@ -3159,7 +3173,7 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           return { label: k, value: levelCountMap[k], tone: tone };
         });
 
-        return res.json({ 
+        const resultPayload = { 
           ok: true, 
           items, 
           total: items.length, 
@@ -3178,7 +3192,13 @@ await writeAudit(currentUser, dataIn.id ? 'behavior.update' : 'behavior.create',
           categories: ['การเรียน', 'พฤติกรรม', 'สุขภาพ', 'เศรษฐกิจ/ยากจน', 'ครอบครัว', 'ความปลอดภัย', 'อื่น ๆ'], 
           classes: (classes || []).map(c => ({ id: c.id, name: c.name || `${c.level}/${c.room}` })), 
           can: { manage: true } 
-        });
+        };
+
+        // 📌 บันทึกลงแคชเพื่อเรียกใช้ในครั้งถัดไปให้รวดเร็ว
+        caseCache = resultPayload;
+        caseCacheTime = Date.now();
+
+        return res.json(resultPayload);
       }
 
       case 'contact.list': {
