@@ -1740,13 +1740,15 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
         const dataIn = { ...payload };
         ['class_name', 'attendee_total', 'attendee_joined', 'is_upcoming'].forEach(k => delete dataIn[k]);
 
-        // 📌 แปลง class_ids จาก Array ให้เป็น JSON string หรือคั่นด้วยคอมมาเพื่อเก็บบันทึก
-        if (Array.isArray(dataIn.class_ids)) {
-          dataIn.class_ids = JSON.stringify(dataIn.class_ids);
-        } else if (!dataIn.class_ids && dataIn.class_id) {
-          // รองรับกรณีส่งมาแบบห้องเดี่ยวเดิม
-          dataIn.class_ids = JSON.stringify([dataIn.class_id]);
+        // 📌 ปรับให้ดึงค่าห้องแรกมาเก็บใน class_id (กรณีเลือกหลายห้อง หรือเลือกห้องเดียว)
+        if (Array.isArray(dataIn.class_ids) && dataIn.class_ids.length > 0) {
+          dataIn.class_id = dataIn.class_ids[0]; // บันท็กรหัสห้องตัวแรก
+        } else if (dataIn.class_id) {
+          dataIn.class_id = dataIn.class_id;
         }
+
+        // ตัดฟิลด์ class_ids ออกเพื่อป้องกัน Error กรณีที่ใน Supabase ไม่มีคอลัมน์นี้
+        delete dataIn.class_ids;
 
         Object.keys(dataIn).forEach(key => {
           if (dataIn[key] === '' || dataIn[key] === undefined) {
@@ -3497,15 +3499,16 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
         const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
         const classMap = {}; (classes || []).forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
 
+        // 📌 ปรับมารองรับ class_id เดี่ยว
         let targetClassIds = [];
-        if (item && item.class_ids) {
+        if (item && item.class_id) {
+          targetClassIds = [item.class_id];
+        } else if (item && item.class_ids) {
           try {
             targetClassIds = JSON.parse(item.class_ids);
           } catch (e) {
             targetClassIds = [item.class_ids];
           }
-        } else if (item && item.class_id) {
-          targetClassIds = [item.class_id];
         }
 
         // ดึงรายชื่อนักเรียนทั้งหมด
@@ -3521,7 +3524,6 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           const { data: attData } = await supabase.from('ActivityAttendees').select('*').eq('activity_id', id);
           const studentMap = {}; (students || []).forEach(s => { studentMap[s.id] = s; });
 
-          // ถ้ายัองไม่มีการบันทึกผู้เข้าร่วม ให้ดึงนักเรียนในห้องเป้าหมายมาแสดงเป็นค่าเริ่มต้น
           if (!attData || attData.length === 0) {
             (students || []).forEach(s => {
               const sName = `${s.prefix || ''}${s.first_name || ''} ${s.last_name || ''}`.trim() || 'ไม่พบข้อมูล';
