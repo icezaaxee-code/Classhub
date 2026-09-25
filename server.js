@@ -1332,7 +1332,78 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
         behaviorCache = null;
         return res.json({ ok: true });
       }
+      
+      case 'upload.image': {
+        const { file_data, folder = 'visits' } = payload;
+        if (!file_data || !file_data.startsWith('data:')) {
+          return res.status(400).json({ ok: false, error: 'รูปแบบไฟล์ไม่ถูกต้อง' });
+        }
 
+        try {
+          const matches = file_data.match(/^data:(.+);base64,(.+)$/);
+          if (!matches || matches.length !== 3) {
+            return res.status(400).json({ ok: false, error: 'แปลงไฟล์ไม่สำเร็จ' });
+          }
+
+          const mimeType = matches[1];
+          const buffer = Buffer.from(matches[2], 'base64');
+          const fileExt = mimeType.split('/')[1] || 'jpg';
+          const fileName = `${folder}/${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('school-assets')
+            .upload(fileName, buffer, { contentType: mimeType, upsert: true });
+
+          if (uploadError) {
+            return res.status(500).json({ ok: false, error: uploadError.message });
+          }
+
+          const { data: urlData } = supabase.storage
+            .from('school-assets')
+            .getPublicUrl(fileName);
+
+          return res.json({ ok: true, url: urlData.publicUrl });
+        } catch (err) {
+          return res.status(500).json({ ok: false, error: err.message });
+        }
+      }
+
+// ตัวอย่างเวลาใช้งานตอนผู้ใช้เลือกรูปถ่ายเยี่ยมบ้าน
+const photoInput = document.getElementById('photoInputId'); // เปลี่ยนเป็น ID ของช่องเลือกไฟล์รูปของคุณครู
+
+// สมมติว่าอยู่ในฟังก์ชันตอนกดปุ่มบันทึก
+async function handleSaveVisit() {
+  let photoDataUrl = '';
+  
+  if (photoInput.files && photoInput.files[0]) {
+    // 1. เรียกใช้ฟังก์ชันบีบอัดภาพก่อนส่ง (ลดขนาดเหลือความกว้างไม่เกิน 800px และคุณภาพ 70%)
+    photoDataUrl = await compressImage(photoInput.files[0], 800, 0.7);
+  }
+
+  // 2. จัดเตรียม Payload สำหรับส่งเข้า API
+  const payload = {
+    student_id: '...',
+    visit_date: '...',
+    photo_data: photoDataUrl, // ส่งข้อมูลรูปที่บีบอัดแล้วผ่านฟิลด์นี้
+    // ... ข้อมูลอื่นๆ ของการเยี่ยมบ้าน
+  };
+
+  // 3. ส่งข้อมูลไปที่ Backend ผ่าน fetch API ปกติ
+  const response = await fetch('/api/v1/router', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'visit.save',
+      token: localStorage.getItem('token'),
+      payload: payload
+    })
+  });
+  
+  const result = await response.json();
+  if (result.ok) {
+    alert('บันทึกสำเร็จ!');
+  }
+}
      case 'visit.save': {
         const payloadData = { ...payload };
 
@@ -1395,9 +1466,10 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
       }
 
       case 'visit.delete': {
-        await supabase.from('HomeVisits').delete().eq('id', payload?.id);
-        return res.json({ ok: true });
-      }
+  await supabase.from('HomeVisits').delete().eq('id', payload?.id);
+  visitCache = null; // 📌 เพิ่มบรรทัดนี้เพื่อล้างแคชเซิร์ฟเวอร์
+  return res.json({ ok: true });
+}
 
       case 'case.save': {
         const payloadData = { ...payload };
@@ -2934,8 +3006,12 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
         const filterClassId = String(payload?.class_id || '').trim();
         const filterStatus = String(payload?.status || '').trim();
 
-        // 📌 เลือกดึงเฉพาะคอลัมน์ที่จำเป็น ลดขนาดข้อมูลและเพิ่มความเร็วในการดึงข้อมูลจาก Supabase
-        const { data: visits } = await supabase.from('HomeVisits').select('id, student_id, status, summary, note, visit_date, created_by, created_at');
+        // 📌 ปรับให้ดึงข้อมูลทั้งหมดจาก HomeVisits ป้องกันฟิลด์ข้อมูลตกหล่น
+        const { data: visits, error: visitErr } = await supabase.from('HomeVisits').select('*');
+        if (visitErr) {
+          console.error('❌ Visit List Error:', visitErr.message);
+        }
+
         const { data: students } = await supabase.from('Students').select('id, prefix, first_name, last_name, nickname, number, class_id, photo_url, watch_level');
         const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
         const { data: users } = await supabase.from('Users').select('id, full_name');

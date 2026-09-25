@@ -1262,6 +1262,15 @@
     }).catch(function (e) { A.spinHide(); toast(e.message, 'bad'); });
   }
 
+  function convertFileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = error => reject(error);
+  });
+}
+
   function openVisitForm(id, studentId, ctx, cur) {
     var r = cur || { visit_date: TH.iso(new Date()), status: 'เยี่ยมแล้ว' };
     loadStudentOptions().then(function () {
@@ -1324,20 +1333,48 @@
         onOpen: function (host) {
           var ph = $('#vis-photo', host);
           if (ph) ph.addEventListener('change', function () { A.previewPhoto(ph, '#pv-vis'); });
+          
           var sv = $('#vis-save', host);
-          if (sv) sv.addEventListener('click', function () {
+          if (sv) sv.addEventListener('click', async function () {
             var data = readForm(host);
             if (!data.student_id) { toast('กรุณาเลือกนักเรียน', 'warn'); return; }
-            if (ph && ph.dataset.url) data.photo_data = ph.dataset.url;
+            
+            // อัปโหลดรูปภาพไปที่ Supabase Storage ก่อนกดบันทึกข้อมูลหลัก
+            if (ph && ph.files && ph.files[0]) {
+              try {
+                A.spinShow('กำลังอัปโหลดรูปภาพ...');
+                var base64Data = await convertFileToBase64(ph.files[0]);
+                var upRes = await call('upload.image', { file_data: base64Data, folder: 'visits' });
+                if (upRes && upRes.url) {
+                  data.photo_url = upRes.url;
+                }
+                A.spinHide();
+              } catch (err) {
+                A.spinHide();
+                toast('อัปโหลดรูปภาพไม่สำเร็จ: ' + err.message, 'bad');
+                return;
+              }
+            } else if (ph && ph.dataset.url) {
+              data.photo_url = ph.dataset.url;
+            }
+
             runAction(sv, {}, function () {
               return call('visit.save', data).then(function () {
-                modalClose(); toast('บันทึกการเยี่ยมบ้านเรียบร้อย', 'ok'); Store.home = null; loadVisit($('#page'));
+                // เคลียร์แคชหน้าเว็บเพื่อให้ข้อมูลแสดงผลทันที
+                if (typeof A.setMemCache === 'function') {
+                  A.setMemCache('visits_list_' + JSON.stringify(VIS), null);
+                }
+
+                modalClose(); 
+                toast('บันทึกการเยี่ยมบ้านเรียบร้อย', 'ok'); 
+                Store.home = null; 
+                loadVisit($('#page'));
               });
             });
           });
         }
       });
-    }).catch(function (e) { toast(e.message, 'bad'); });
+    }).catch(function (e) { toast(e.message, 'bad'); }); // บรรทัดนี้ทำหน้าที่ดักจับ Error ตอนโหลดรายชื่อนักเรียนครับ
   }
 
   /* ═══════════════════════════════════════════════════════════
