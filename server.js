@@ -1316,7 +1316,7 @@ await writeAudit(currentUser, 'attendance.save', 'Attendance', class_id, { date:
           result = data ? data[0] : dataIn;
         } else {
           dataIn.id = 'BHV-' + Math.floor(100000 + Math.random() * 900000);
-          const { data, error } = await supabase.from('Behมีaviors').insert([dataIn]).select();
+          const { data, error } = await supabase.from('Behaviors').insert([dataIn]).select();
           if (error) return res.status(500).json({ ok: false, error: error.message });
           result = data ? data[0] : dataIn;
         }
