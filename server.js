@@ -2995,7 +2995,7 @@ async function handleSaveVisit() {
         return res.json(resultPayload);
       }
 
-      case 'visit.list': {
+        case 'visit.list': {
         // ตรวจสอบแคชในหน่วยความจำ (อายุแคช 2 นาที = 120,000 มิลลิวินาที)
         const nowTime = Date.now();
         if (visitCache && (nowTime - visitCacheTime < 120000)) {
@@ -3018,7 +3018,7 @@ async function handleSaveVisit() {
         const students = studentsRes.data || [];
         const classes = classesRes.data || [];
         const users = usersRes.data || [];
-
+        
         // จัดเรียงลำดับห้องเรียนจาก อ.1 ถึง ม.3
         const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
         if (classes) {
@@ -3094,6 +3094,7 @@ async function handleSaveVisit() {
 
         return res.json(resultPayload);
       }
+
 
       case 'health.index':
       case 'health.list': {
