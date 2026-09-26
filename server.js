@@ -3006,15 +3006,18 @@ async function handleSaveVisit() {
         const filterClassId = String(payload?.class_id || '').trim();
         const filterStatus = String(payload?.status || '').trim();
 
-        // 📌 ปรับให้ดึงข้อมูลทั้งหมดจาก HomeVisits ป้องกันฟิลด์ข้อมูลตกหล่น
-        const { data: visits, error: visitErr } = await supabase.from('HomeVisits').select('*');
-        if (visitErr) {
-          console.error('❌ Visit List Error:', visitErr.message);
-        }
+        // 🚀 ดึงข้อมูลเฉพาะคอลัมน์ที่จำเป็นพร้อมกันด้วย Promise.all เพื่อความเร็วสูงสุด
+        const [visitsRes, studentsRes, classesRes, usersRes] = await Promise.all([
+          supabase.from('HomeVisits').select('id, student_id, status, visit_date, photo_url, visitor, next_date, created_by, created_at'),
+          supabase.from('Students').select('id, prefix, first_name, last_name, nickname, number, class_id, photo_url, watch_level'),
+          supabase.from('Classrooms').select('id, level, room, name'),
+          supabase.from('Users').select('id, full_name')
+        ]);
 
-        const { data: students } = await supabase.from('Students').select('id, prefix, first_name, last_name, nickname, number, class_id, photo_url, watch_level');
-        const { data: classes } = await supabase.from('Classrooms').select('id, level, room, name');
-        const { data: users } = await supabase.from('Users').select('id, full_name');
+        const visits = visitsRes.data || [];
+        const students = studentsRes.data || [];
+        const classes = classesRes.data || [];
+        const users = usersRes.data || [];
 
         // จัดเรียงลำดับห้องเรียนจาก อ.1 ถึง ม.3
         const levelOrder = { 'อ.1': 1, 'อ.2': 2, 'อ.3': 3, 'ป.1': 4, 'ป.2': 5, 'ป.3': 6, 'ป.4': 7, 'ป.5': 8, 'ป.6': 9, 'ม.1': 10, 'ม.2': 11, 'ม.3': 12, 'ม.4': 13, 'ม.5': 14, 'ม.6': 15 };
@@ -3027,11 +3030,11 @@ async function handleSaveVisit() {
           });
         }
 
-        const studentMap = {}; (students || []).forEach(s => { studentMap[s.id] = s; });
-        const classMap = {}; (classes || []).forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
-        const userMap = {}; (users || []).forEach(u => { userMap[u.id] = u.full_name; });
+        const studentMap = {}; students.forEach(s => { studentMap[s.id] = s; });
+        const classMap = {}; classes.forEach(c => { classMap[c.id] = c.name || `${c.level}/${c.room}`; });
+        const userMap = {}; users.forEach(u => { userMap[u.id] = u.full_name; });
 
-        let items = (visits || []).map(v => {
+        let items = visits.map(v => {
           const s = studentMap[v.student_id] || {};
           const fullName = `${s.prefix || ''}${s.first_name || ''} ${s.last_name || ''}`.trim();
           return {

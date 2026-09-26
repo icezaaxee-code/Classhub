@@ -1,0 +1,9 @@
+{
+  "appId": "com.classhub.app",
+  "appName": "Classhub",
+  "webDir": "public",
+  "server": {
+    "url": "https://classhubnaphoschool.vercel.app",
+    "cleartext": true
+  }
+}
